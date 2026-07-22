@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { SkinViewer } from "skinview3d";
 import { MOUSE, Raycaster, Vector2 } from "three";
+import type { Object3D } from "three";
 import type { SkinModel } from "@shared/types";
 
 const props = withDefaults(
@@ -16,6 +17,7 @@ const props = withDefaults(
     armsOuter?: boolean;
     legsOuter?: boolean;
     editable?: boolean;
+    editLayer?: "inner" | "outer";
   }>(),
   {
     skin: null,
@@ -28,6 +30,7 @@ const props = withDefaults(
     armsOuter: true,
     legsOuter: true,
     editable: false,
+    editLayer: "inner",
   },
 );
 const emit = defineEmits<{
@@ -45,6 +48,27 @@ let modelDrawing = false;
 const raycaster = new Raycaster();
 const pointer = new Vector2();
 
+function layerOf(object: Object3D): "inner" | "outer" | null {
+  let current: Object3D | null = object;
+  while (current && current !== viewer?.playerObject.skin) {
+    if (current.name === "inner" || current.name === "outer") {
+      return current.name;
+    }
+    current = current.parent;
+  }
+  return null;
+}
+
+function isVisible(object: Object3D): boolean {
+  let current: Object3D | null = object;
+  while (current) {
+    if (!current.visible) return false;
+    if (current === viewer?.playerObject.skin) break;
+    current = current.parent;
+  }
+  return true;
+}
+
 function texturePoint(event: PointerEvent): { x: number; y: number } | null {
   if (!viewer || !canvas.value) return null;
   const rect = canvas.value.getBoundingClientRect();
@@ -53,7 +77,12 @@ function texturePoint(event: PointerEvent): { x: number; y: number } | null {
   raycaster.setFromCamera(pointer, viewer.camera);
   const hit = raycaster
     .intersectObject(viewer.playerObject.skin, true)
-    .find((entry) => entry.uv);
+    .find(
+      (entry) =>
+        entry.uv &&
+        isVisible(entry.object) &&
+        layerOf(entry.object) === props.editLayer,
+    );
   if (!hit?.uv) return null;
   return {
     x: Math.max(0, Math.min(63, Math.floor(hit.uv.x * 64))),

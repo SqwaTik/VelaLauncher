@@ -83,7 +83,7 @@ onBeforeUnmount(() => {
         muted
         loop
         playsinline
-        preload="metadata"
+        preload="auto"
         :style="{ objectFit: settings.settings?.backgroundFit || 'cover' }"
       />
       <div

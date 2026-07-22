@@ -9,8 +9,12 @@ const emit = defineEmits<{ close: [] }>();
 const account = useAccountStore();
 const canvas = ref<HTMLCanvasElement | null>(null);
 const tool = ref<"pencil" | "eraser" | "fill" | "picker">("pencil");
-const viewMode = ref<"3d" | "texture">("texture");
+const viewMode = ref<"3d" | "texture">("3d");
 const color = ref("#55d878");
+const colorPickerOpen = ref(false);
+const hue = ref(138);
+const saturation = ref(61);
+const brightness = ref(85);
 const brushSize = ref(1);
 const model = ref<SkinModel>(account.active?.skinModel ?? "classic");
 const symmetry = ref(false);
@@ -24,6 +28,7 @@ const headOuter = ref(true);
 const bodyOuter = ref(true);
 const armsOuter = ref(true);
 const legsOuter = ref(true);
+const activeLayer = ref<"inner" | "outer">("inner");
 const busy = ref(false);
 const error = ref("");
 const history = ref<ImageData[]>([]);
@@ -50,6 +55,159 @@ const swatches = [
   "#2a302c",
 ];
 
+type Rgb = { r: number; g: number; b: number };
+type TextureLayer = "inner" | "outer";
+
+const outerRegions = [
+  { part: "head", x: 32, y: 0, width: 32, height: 16 },
+  { part: "legs", x: 0, y: 32, width: 16, height: 16 },
+  { part: "body", x: 16, y: 32, width: 24, height: 16 },
+  { part: "arms", x: 40, y: 32, width: 16, height: 16 },
+  { part: "legs", x: 0, y: 48, width: 16, height: 16 },
+  { part: "arms", x: 48, y: 48, width: 16, height: 16 },
+] as const;
+
+function textureLayerAt(x: number, y: number): TextureLayer {
+  return outerRegions.some(
+    (region) =>
+      x >= region.x &&
+      x < region.x + region.width &&
+      y >= region.y &&
+      y < region.y + region.height,
+  )
+    ? "outer"
+    : "inner";
+}
+
+function canEditAt(x: number, y: number): boolean {
+  if (textureLayerAt(x, y) !== activeLayer.value) return false;
+  if (activeLayer.value === "inner") return innerLayer.value;
+  if (!outerLayer.value) return false;
+  const region = outerRegions.find(
+    (entry) =>
+      x >= entry.x &&
+      x < entry.x + entry.width &&
+      y >= entry.y &&
+      y < entry.y + entry.height,
+  );
+  if (!region) return false;
+  if (region.part === "head") return headOuter.value;
+  if (region.part === "body") return bodyOuter.value;
+  if (region.part === "arms") return armsOuter.value;
+  return legsOuter.value;
+}
+
+function hexToRgb(value: string): Rgb {
+  const normalized = value.replace("#", "");
+  return {
+    r: Number.parseInt(normalized.slice(0, 2), 16),
+    g: Number.parseInt(normalized.slice(2, 4), 16),
+    b: Number.parseInt(normalized.slice(4, 6), 16),
+  };
+}
+
+function rgbToHex({ r, g, b }: Rgb): string {
+  return `#${[r, g, b]
+    .map((channel) =>
+      Math.max(0, Math.min(255, Math.round(channel)))
+        .toString(16)
+        .padStart(2, "0"),
+    )
+    .join("")}`;
+}
+
+function rgbToHsv({ r, g, b }: Rgb): {
+  h: number;
+  s: number;
+  v: number;
+} {
+  const red = r / 255;
+  const green = g / 255;
+  const blue = b / 255;
+  const max = Math.max(red, green, blue);
+  const min = Math.min(red, green, blue);
+  const delta = max - min;
+  let h = 0;
+  if (delta) {
+    if (max === red) h = 60 * (((green - blue) / delta) % 6);
+    else if (max === green) h = 60 * ((blue - red) / delta + 2);
+    else h = 60 * ((red - green) / delta + 4);
+  }
+  return {
+    h: h < 0 ? h + 360 : h,
+    s: max ? (delta / max) * 100 : 0,
+    v: max * 100,
+  };
+}
+
+function hsvToRgb(h: number, s: number, v: number): Rgb {
+  const chroma = (v / 100) * (s / 100);
+  const section = h / 60;
+  const secondary = chroma * (1 - Math.abs((section % 2) - 1));
+  const offset = v / 100 - chroma;
+  const [red, green, blue] =
+    section < 1
+      ? [chroma, secondary, 0]
+      : section < 2
+        ? [secondary, chroma, 0]
+        : section < 3
+          ? [0, chroma, secondary]
+          : section < 4
+            ? [0, secondary, chroma]
+            : section < 5
+              ? [secondary, 0, chroma]
+              : [chroma, 0, secondary];
+  return {
+    r: (red + offset) * 255,
+    g: (green + offset) * 255,
+    b: (blue + offset) * 255,
+  };
+}
+
+function setColor(value: string): void {
+  color.value = value.toLowerCase();
+  const next = rgbToHsv(hexToRgb(color.value));
+  hue.value = Math.round(next.h);
+  saturation.value = Math.round(next.s);
+  brightness.value = Math.round(next.v);
+}
+
+function updateFromHsv(): void {
+  color.value = rgbToHex(
+    hsvToRgb(hue.value, saturation.value, brightness.value),
+  );
+}
+
+function updateColorPlane(event: PointerEvent): void {
+  const target = event.currentTarget as HTMLElement;
+  const rect = target.getBoundingClientRect();
+  saturation.value = Math.round(
+    Math.max(
+      0,
+      Math.min(100, ((event.clientX - rect.left) / rect.width) * 100),
+    ),
+  );
+  brightness.value = Math.round(
+    Math.max(
+      0,
+      Math.min(100, 100 - ((event.clientY - rect.top) / rect.height) * 100),
+    ),
+  );
+  updateFromHsv();
+}
+
+function beginColorPlane(event: PointerEvent): void {
+  (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  updateColorPlane(event);
+}
+
+function updateRgb(channel: keyof Rgb, event: Event): void {
+  const input = event.target as HTMLInputElement;
+  const next = hexToRgb(color.value);
+  next[channel] = Math.max(0, Math.min(255, Number(input.value) || 0));
+  setColor(rgbToHex(next));
+}
+
 function chooseTool(next: typeof tool.value): void {
   tool.value = next;
 }
@@ -61,7 +219,7 @@ function updateHex(event: Event): void {
       .split("")
       .map((part) => part + part)
       .join("");
-  if (/^[0-9a-f]{6}$/i.test(value)) color.value = `#${value.toLowerCase()}`;
+  if (/^[0-9a-f]{6}$/i.test(value)) setColor(`#${value.toLowerCase()}`);
   input.value = color.value.toUpperCase();
 }
 
@@ -115,18 +273,24 @@ function drawPixel(x: number, y: number): void {
   if (!ctx) return;
   const half = Math.floor(brushSize.value / 2);
   const points = symmetry.value ? [x, 63 - x] : [x];
-  for (const px of new Set(points)) {
-    if (tool.value === "eraser")
-      ctx.clearRect(px - half, y - half, brushSize.value, brushSize.value);
-    else {
-      ctx.fillStyle = color.value;
-      ctx.fillRect(px - half, y - half, brushSize.value, brushSize.value);
+  ctx.fillStyle = color.value;
+  for (const centerX of new Set(points)) {
+    for (let offsetY = 0; offsetY < brushSize.value; offsetY += 1) {
+      for (let offsetX = 0; offsetX < brushSize.value; offsetX += 1) {
+        const px = centerX - half + offsetX;
+        const py = y - half + offsetY;
+        if (px < 0 || py < 0 || px >= 64 || py >= 64) continue;
+        if (!canEditAt(px, py)) continue;
+        if (tool.value === "eraser") ctx.clearRect(px, py, 1, 1);
+        else ctx.fillRect(px, py, 1, 1);
+      }
     }
   }
 }
 function floodFill(x: number, y: number): void {
   const ctx = context();
   if (!ctx) return;
+  if (!canEditAt(x, y)) return;
   const image = ctx.getImageData(0, 0, 64, 64);
   const pixels = image.data;
   const start = (y * 64 + x) * 4;
@@ -150,6 +314,7 @@ function floodFill(x: number, y: number): void {
   while (stack.length) {
     const [px, py] = stack.pop()!;
     if (px < 0 || py < 0 || px >= 64 || py >= 64) continue;
+    if (!canEditAt(px, py)) continue;
     const index = (py * 64 + px) * 4;
     if (
       pixels[index] !== target[0] ||
@@ -169,7 +334,7 @@ function floodFill(x: number, y: number): void {
 function begin(event: PointerEvent): void {
   const { x, y } = point(event);
   if (tool.value === "picker") {
-    color.value = hexAt(x, y);
+    setColor(hexAt(x, y));
     tool.value = "pencil";
     return;
   }
@@ -206,7 +371,7 @@ function paintModel(payload: {
   }
   if (payload.phase === "begin") {
     if (tool.value === "picker") {
-      color.value = hexAt(payload.x, payload.y);
+      setColor(hexAt(payload.x, payload.y));
       tool.value = "pencil";
       return;
     }
@@ -420,10 +585,15 @@ onMounted(async () => {
               </button>
             </div>
             <p class="tool-label section-label">Цвет</p>
-            <div class="color-control">
-              <label class="color-orb" :style="{ background: color }"
-                ><input v-model="color" type="color" /></label
-              ><input
+            <div class="color-control" @click.stop>
+              <button
+                class="color-orb"
+                :class="{ active: colorPickerOpen }"
+                :style="{ background: color }"
+                aria-label="Открыть палитру"
+                @click="colorPickerOpen = !colorPickerOpen"
+              />
+              <input
                 class="hex-field"
                 :value="color.toUpperCase()"
                 maxlength="7"
@@ -431,6 +601,67 @@ onMounted(async () => {
                 aria-label="HEX цвет"
                 @change="updateHex"
               />
+              <Transition name="picker-pop">
+                <div v-if="colorPickerOpen" class="color-picker">
+                  <div
+                    class="color-plane"
+                    :style="{ backgroundColor: `hsl(${hue} 100% 50%)` }"
+                    @pointerdown.prevent="beginColorPlane"
+                    @pointermove.prevent="
+                      ($event.currentTarget as HTMLElement).hasPointerCapture(
+                        $event.pointerId,
+                      ) && updateColorPlane($event)
+                    "
+                  >
+                    <i
+                      :style="{
+                        left: `${saturation}%`,
+                        top: `${100 - brightness}%`,
+                      }"
+                    />
+                  </div>
+                  <div class="color-picker-row">
+                    <button
+                      title="Взять цвет со скина"
+                      :class="{ active: tool === 'picker' }"
+                      @click="
+                        chooseTool('picker');
+                        colorPickerOpen = false;
+                      "
+                    >
+                      <Icon name="picker" :size="17" />
+                    </button>
+                    <span
+                      class="picker-preview"
+                      :style="{ background: color }"
+                    />
+                    <input
+                      v-model.number="hue"
+                      class="hue-slider"
+                      type="range"
+                      min="0"
+                      max="359"
+                      aria-label="Оттенок"
+                      @input="updateFromHsv"
+                    />
+                  </div>
+                  <div class="color-values">
+                    <label
+                      v-for="channel in ['r', 'g', 'b'] as const"
+                      :key="channel"
+                    >
+                      <input
+                        :value="hexToRgb(color)[channel]"
+                        type="number"
+                        min="0"
+                        max="255"
+                        @change="updateRgb(channel, $event)"
+                      />
+                      <span>{{ channel.toUpperCase() }}</span>
+                    </label>
+                  </div>
+                </div>
+              </Transition>
             </div>
             <div class="swatches">
               <button
@@ -438,7 +669,7 @@ onMounted(async () => {
                 :key="swatch"
                 :class="{ active: color === swatch }"
                 :style="{ background: swatch }"
-                @click="color = swatch"
+                @click="setColor(swatch)"
               />
             </div>
             <p class="tool-label section-label">Модель</p>
@@ -506,6 +737,7 @@ onMounted(async () => {
                 :model="model"
                 :auto-rotate="false"
                 editable
+                :edit-layer="activeLayer"
                 :inner-layer="innerLayer"
                 :outer-layer="outerLayer"
                 :head-outer="headOuter"
@@ -544,15 +776,21 @@ onMounted(async () => {
           <aside class="layers-panel">
             <p class="tool-label">Слои модели</p>
             <button
-              :class="{ active: innerLayer }"
-              @click="innerLayer = !innerLayer"
+              :class="{ active: activeLayer === 'inner' }"
+              @click="
+                activeLayer = 'inner';
+                innerLayer = true;
+              "
             >
               <span><Icon name="shirt" :size="17" /></span>
               <div><b>Основной слой</b><small>Тело скина</small></div>
               <i /></button
             ><button
-              :class="{ active: outerLayer }"
-              @click="outerLayer = !outerLayer"
+              :class="{ active: activeLayer === 'outer' }"
+              @click="
+                activeLayer = 'outer';
+                outerLayer = true;
+              "
             >
               <span><Icon name="layers" :size="17" /></span>
               <div><b>Внешний слой</b><small>Маска и одежда</small></div>
@@ -585,9 +823,10 @@ onMounted(async () => {
               <span>Штанины</span><i />
             </button>
             <div class="layer-note">
-              <Icon name="eye" :size="15" />
+              <Icon name="pencil" :size="15" />
               <p>
-                Переключатели меняют только предпросмотр и не удаляют пиксели.
+                Кисть и ластик меняют только выбранный слой. Скрытые части не
+                перехватывают рисование на 3D-модели.
               </p>
             </div>
           </aside>
@@ -668,7 +907,7 @@ onMounted(async () => {
   min-height: 0;
   flex: 1;
   display: grid;
-  grid-template-columns: 190px minmax(400px, 1fr) 196px;
+  grid-template-columns: 224px minmax(400px, 1fr) 202px;
 }
 .tools,
 .layers-panel {
@@ -759,6 +998,8 @@ onMounted(async () => {
   background: var(--green-soft);
 }
 .color-control {
+  position: relative;
+  z-index: 12;
   height: 47px;
   padding: 5px 8px;
   display: flex;
@@ -778,16 +1019,160 @@ onMounted(async () => {
   box-shadow:
     0 0 0 2px var(--green-line),
     0 4px 12px #0006;
-}
-.color-orb input {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
   cursor: pointer;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.color-orb:hover,
+.color-orb.active {
+  transform: scale(1.06);
+  box-shadow:
+    0 0 0 2px var(--green),
+    0 6px 16px #0008;
 }
 .color-control code {
   font-family: var(--font-num);
   font-size: 10px;
+}
+.color-picker {
+  position: absolute;
+  top: 53px;
+  left: 0;
+  width: 202px;
+  padding: 9px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 12px;
+  background: #151a18;
+  box-shadow: 0 18px 50px #000b;
+}
+.color-plane {
+  position: relative;
+  height: 126px;
+  overflow: hidden;
+  border-radius: 8px;
+  cursor: crosshair;
+  touch-action: none;
+  background-image:
+    linear-gradient(to top, #000, transparent),
+    linear-gradient(to right, #fff, transparent);
+}
+.color-plane::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(to top, #000, transparent),
+    linear-gradient(to right, #fff, transparent);
+}
+.color-plane i {
+  position: absolute;
+  z-index: 1;
+  width: 13px;
+  height: 13px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 5px #000c;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.color-picker-row {
+  margin-top: 9px;
+  display: grid;
+  grid-template-columns: 30px 30px 1fr;
+  align-items: center;
+  gap: 7px;
+}
+.color-picker-row button,
+.picker-preview {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+}
+.color-picker-row button {
+  color: var(--text-2);
+  background: var(--surface-3);
+}
+.color-picker-row button:hover,
+.color-picker-row button.active {
+  color: var(--green);
+  background: var(--green-soft);
+}
+.picker-preview {
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px #0008;
+}
+.hue-slider {
+  width: 100%;
+  height: 12px;
+  padding: 0;
+  appearance: none;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    #f33,
+    #ff0,
+    #2dff66,
+    #20e6ff,
+    #36f,
+    #d33bff,
+    #f33
+  );
+}
+.hue-slider::-webkit-slider-thumb {
+  width: 16px;
+  height: 16px;
+  appearance: none;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: 0 1px 5px #000b;
+}
+.color-values {
+  margin-top: 9px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+.color-values label {
+  display: grid;
+  gap: 4px;
+  color: var(--text-3);
+  font-size: 8px;
+  text-align: center;
+}
+.color-values input {
+  min-width: 0;
+  height: 30px;
+  padding: 0 4px;
+  color: var(--text-0);
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  outline: none;
+  background: #0c100e;
+  font: 600 10px var(--font-num);
+  text-align: center;
+  appearance: textfield;
+}
+.color-values input::-webkit-inner-spin-button {
+  appearance: none;
+}
+.color-values input:focus {
+  border-color: var(--green-line);
+}
+.picker-pop-enter-active,
+.picker-pop-leave-active {
+  transition:
+    opacity 0.13s ease,
+    transform 0.13s ease;
+  transform-origin: top left;
+}
+.picker-pop-enter-from,
+.picker-pop-leave-to {
+  opacity: 0;
+  transform: translateY(-5px) scale(0.98);
 }
 .swatches {
   margin-top: 8px;

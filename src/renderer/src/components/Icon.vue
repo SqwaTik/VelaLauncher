@@ -7,7 +7,6 @@
 import { computed } from "vue";
 import {
   House,
-  Boxes,
   Settings,
   Play,
   Pause,
@@ -82,6 +81,7 @@ import {
   SquareMousePointer,
   ZoomIn,
   ZoomOut,
+  Puzzle,
 } from "lucide-vue-next";
 import type { FunctionalComponent } from "vue";
 
@@ -94,7 +94,7 @@ const props = withDefaults(
 
 const map: Record<string, IconComp> = {
   home: House,
-  mods: Boxes,
+  mods: Puzzle,
   cube: Box,
   settings: Settings,
   play: Play,

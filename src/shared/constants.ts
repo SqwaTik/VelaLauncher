@@ -112,6 +112,7 @@ export const IPC = {
   modInstalledList: "mod:installed-list",
   modToggle: "mod:toggle",
   modRemove: "mod:remove",
+  modReveal: "mod:reveal",
   modProgress: "mod:progress", // main -> renderer (event)
 } as const;
 

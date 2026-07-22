@@ -166,6 +166,8 @@ const api = {
       ipcRenderer.invoke(IPC.modToggle, filename, enabled),
     remove: (filename: string): Promise<void> =>
       ipcRenderer.invoke(IPC.modRemove, filename),
+    reveal: (filename: string): Promise<void> =>
+      ipcRenderer.invoke(IPC.modReveal, filename),
     onProgress: (
       cb: (p: {
         filename: string;

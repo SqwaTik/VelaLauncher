@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import Icon from "@/components/Icon.vue";
 import UiSwitch from "@/components/ui/UiSwitch.vue";
 import FabricLogo from "@/components/FabricLogo.vue";
@@ -26,6 +26,11 @@ const detail = ref<{ project: ModProject; installed?: InstalledMod } | null>(
 );
 const detailLoading = ref(false);
 const galleryIndex = ref(0);
+const contextMenu = ref<{
+  item: InstalledMod;
+  x: number;
+  y: number;
+} | null>(null);
 
 const categories = [
   { id: "all", label: "Все категории", icon: "layers" },
@@ -76,6 +81,24 @@ function formatDownloads(value: number): string {
     notation: "compact",
     maximumFractionDigits: 1,
   }).format(value);
+}
+function russianCount(
+  count: number,
+  one: string,
+  few: string,
+  many: string,
+): string {
+  const tens = count % 100;
+  const units = count % 10;
+  const word =
+    tens >= 11 && tens <= 14
+      ? many
+      : units === 1
+        ? one
+        : units >= 2 && units <= 4
+          ? few
+          : many;
+  return `${count} ${word}`;
 }
 function install(project: ModProject): void {
   void mods.installLatest(project);
@@ -162,6 +185,31 @@ function removeDetailed(): void {
   detail.value = null;
   void askRemove([installed]);
 }
+function showContext(event: MouseEvent, item: InstalledMod): void {
+  event.preventDefault();
+  const width = 220;
+  const height = 252;
+  contextMenu.value = {
+    item,
+    x: Math.min(event.clientX, window.innerWidth - width - 10),
+    y: Math.min(event.clientY, window.innerHeight - height - 10),
+  };
+}
+function closeContext(): void {
+  contextMenu.value = null;
+}
+async function contextToggle(item: InstalledMod): Promise<void> {
+  closeContext();
+  await mods.toggle(item);
+}
+async function reveal(item: InstalledMod): Promise<void> {
+  closeContext();
+  await window.royale.mods.reveal(item.filename);
+}
+function contextRemove(item: InstalledMod): void {
+  closeContext();
+  void askRemove([item]);
+}
 
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
 watch(query, () => {
@@ -181,8 +229,14 @@ watch(tab, () => {
   selected.value = new Set();
 });
 onMounted(async () => {
+  window.addEventListener("pointerdown", closeContext);
+  window.addEventListener("blur", closeContext);
   await mods.loadInstalled();
   await mods.search("", "all", "relevance");
+});
+onBeforeUnmount(() => {
+  window.removeEventListener("pointerdown", closeContext);
+  window.removeEventListener("blur", closeContext);
 });
 </script>
 
@@ -271,9 +325,6 @@ onMounted(async () => {
       <Transition name="fade"
         ><p v-if="mods.error" class="message error">
           <Icon name="alert" :size="16" />{{ mods.error }}
-        </p>
-        <p v-else-if="mods.notice" class="message success">
-          <Icon name="check" :size="16" />{{ mods.notice }}
         </p></Transition
       >
       <div v-if="mods.loading && !mods.results.length" class="mod-grid">
@@ -326,15 +377,7 @@ onMounted(async () => {
             <button class="more-button" @click="openDetails(project)">
               {{ tr("Подробнее", "Details", "Detalles") }}</button
             ><button
-              v-if="mods.isInstalled(project)"
-              class="install-button installed"
-              disabled
-            >
-              <Icon name="check" :size="16" />{{
-                tr("Установлено", "Installed", "Instalado")
-              }}</button
-            ><button
-              v-else
+              v-if="!mods.isInstalled(project)"
               class="install-button"
               :disabled="mods.busy.has(project.project_id)"
               @click="install(project)"
@@ -381,13 +424,9 @@ onMounted(async () => {
           }}
         </button>
         <div>
-          <b>{{ mods.installed.length }} модов</b
-          ><small
-            >{{ mods.installed.filter((item) => item.enabled).length }} включено
-            ·
-            {{ mods.installed.filter((item) => !item.enabled).length }}
-            отключено</small
-          >
+          <b>{{
+            russianCount(mods.installed.length, "мод", "мода", "модов")
+          }}</b>
         </div>
       </div>
       <Transition name="bulk"
@@ -423,6 +462,7 @@ onMounted(async () => {
             selected: selected.has(item.filename),
           }"
           @click="openInstalled(item)"
+          @contextmenu="showContext($event, item)"
         >
           <button
             class="select-box"
@@ -451,12 +491,6 @@ onMounted(async () => {
               ></small
             >
           </div>
-          <span class="state-copy" :class="{ on: item.enabled }"
-            ><Icon
-              :name="item.enabled ? 'power' : 'powerOff'"
-              :size="15"
-            /><b>{{ item.enabled ? "Включён" : "Отключён" }}</b></span
-          >
           <div @click.stop>
             <UiSwitch
               :model-value="item.enabled"
@@ -497,6 +531,70 @@ onMounted(async () => {
         </button>
       </div>
     </div>
+
+    <Teleport to="body">
+      <Transition name="context-pop">
+        <div
+          v-if="contextMenu"
+          class="mod-context-menu"
+          :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
+          @pointerdown.stop
+          @contextmenu.prevent
+        >
+          <header>
+            <span class="context-icon">
+              <img
+                v-if="contextMenu.item.iconUrl"
+                :src="contextMenu.item.iconUrl"
+                alt=""
+              />
+              <Icon v-else name="mods" :size="18" />
+            </span>
+            <div>
+              <b>{{ contextMenu.item.title || contextMenu.item.filename }}</b>
+              <small>{{
+                contextMenu.item.versionNumber || "Локальный мод"
+              }}</small>
+            </div>
+          </header>
+          <button
+            @click="
+              openInstalled(contextMenu.item);
+              closeContext();
+            "
+          >
+            <Icon name="external" :size="15" />Открыть описание
+          </button>
+          <button @click="reveal(contextMenu.item)">
+            <Icon name="folder" :size="15" />Показать в папке
+          </button>
+          <button @click="contextToggle(contextMenu.item)">
+            <Icon
+              :name="contextMenu.item.enabled ? 'powerOff' : 'power'"
+              :size="15"
+            />
+            {{ contextMenu.item.enabled ? "Отключить" : "Включить" }}
+          </button>
+          <button
+            @click="
+              toggleSelected(contextMenu.item.filename);
+              closeContext();
+            "
+          >
+            <Icon name="select" :size="15" />
+            {{
+              selected.has(contextMenu.item.filename)
+                ? "Снять выделение"
+                : "Выбрать"
+            }}
+          </button>
+          <i />
+          <button class="danger" @click="contextRemove(contextMenu.item)">
+            <Icon name="trash" :size="15" />Удалить
+          </button>
+        </div>
+      </Transition>
+    </Teleport>
 
     <Teleport to="body"
       ><Transition name="drawer"
@@ -683,7 +781,7 @@ onMounted(async () => {
       :title="
         pendingRemoval.length === 1
           ? 'Удалить мод?'
-          : `Удалить ${pendingRemoval.length} модов?`
+          : `Удалить ${russianCount(pendingRemoval.length, 'мод', 'мода', 'модов')}?`
       "
       :message="
         pendingRemoval.length === 1
@@ -1644,6 +1742,100 @@ onMounted(async () => {
 .modal-enter-from .detail-dialog,
 .modal-leave-to .detail-dialog {
   transform: translateY(24px) scale(0.975);
+}
+.mod-context-menu {
+  position: fixed;
+  z-index: 720;
+  width: 220px;
+  padding: 7px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 12px;
+  background: rgba(20, 24, 22, 0.98);
+  box-shadow: 0 22px 60px #000b;
+  backdrop-filter: blur(20px);
+}
+.mod-context-menu header {
+  margin-bottom: 6px;
+  padding: 7px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border-bottom: 1px solid var(--hairline);
+}
+.context-icon {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  overflow: hidden;
+  border-radius: 8px;
+  color: var(--green);
+  background: var(--surface-3);
+}
+.context-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.mod-context-menu header div {
+  min-width: 0;
+}
+.mod-context-menu header b,
+.mod-context-menu header small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mod-context-menu header b {
+  color: var(--text-0);
+  font-size: 10.5px;
+}
+.mod-context-menu header small {
+  margin-top: 2px;
+  color: var(--text-3);
+  font-size: 8.5px;
+}
+.mod-context-menu > button {
+  width: 100%;
+  height: 33px;
+  padding: 0 9px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border-radius: 8px;
+  color: var(--text-1);
+  font-size: 10px;
+  text-align: left;
+}
+.mod-context-menu > button:hover {
+  color: var(--text-0);
+  background: var(--surface-3);
+}
+.mod-context-menu > button.danger {
+  color: var(--danger);
+}
+.mod-context-menu > button.danger:hover {
+  background: rgba(255, 93, 108, 0.1);
+}
+.mod-context-menu > i {
+  display: block;
+  height: 1px;
+  margin: 5px 7px;
+  background: var(--hairline);
+}
+.context-pop-enter-active,
+.context-pop-leave-active {
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+  transform-origin: top left;
+}
+.context-pop-enter-from,
+.context-pop-leave-to {
+  opacity: 0;
+  transform: translateY(-4px) scale(0.98);
 }
 .spin {
   animation: spin 0.8s linear infinite;

@@ -4,11 +4,11 @@ import {
   createWriteStream,
   createReadStream,
 } from "fs";
-import { join } from "path";
+import { basename, join } from "path";
 import { createHash } from "crypto";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
-import { BrowserWindow } from "electron";
+import { BrowserWindow, shell } from "electron";
 import { MODRINTH_API, GAME, IPC } from "../../shared/constants";
 import type {
   ModDependency,
@@ -577,4 +577,18 @@ export async function removeMod(filename: string): Promise<void> {
   const metadata = await readMetadata(dir);
   delete metadata[filename];
   await writeMetadata(dir, metadata);
+}
+
+export async function revealMod(filename: string): Promise<void> {
+  if (basename(filename) !== filename)
+    throw new Error("Некорректное имя мода.");
+  const dir = await modsDir();
+  const active = join(dir, filename);
+  const disabled = join(dir, `${filename}.disabled`);
+  const target = existsSync(active)
+    ? active
+    : existsSync(disabled)
+      ? disabled
+      : dir;
+  shell.showItemInFolder(target);
 }

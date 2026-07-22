@@ -287,4 +287,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.modRemove, (_e, filename: string) =>
     modrinth.removeMod(filename),
   );
+  ipcMain.handle(IPC.modReveal, (_e, filename: string) =>
+    modrinth.revealMod(filename),
+  );
 }

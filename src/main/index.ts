@@ -1,6 +1,8 @@
-import { app, shell, BrowserWindow, net, protocol } from "electron";
-import { join, normalize, relative } from "path";
-import { pathToFileURL } from "url";
+import { app, shell, BrowserWindow, protocol } from "electron";
+import { createReadStream } from "fs";
+import { stat } from "fs/promises";
+import { join, normalize, relative, extname } from "path";
+import { Readable } from "stream";
 import { registerIpc } from "./ipc";
 import { loadState } from "./services/store";
 import { destroyDiscord, initDiscord } from "./services/discord";
@@ -19,6 +21,71 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 let mainWindow: BrowserWindow | null = null;
+
+const mediaTypes: Record<string, string> = {
+  ".mp4": "video/mp4",
+  ".m4v": "video/mp4",
+  ".webm": "video/webm",
+  ".mov": "video/quicktime",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+};
+
+async function streamMedia(
+  requestedPath: string,
+  request: Request,
+): Promise<Response> {
+  const info = await stat(requestedPath);
+  if (!info.isFile()) return new Response("Not found", { status: 404 });
+
+  const contentType =
+    mediaTypes[extname(requestedPath).toLocaleLowerCase()] ||
+    "application/octet-stream";
+  const range = request.headers.get("range");
+  let start = 0;
+  let end = info.size - 1;
+  let status = 200;
+
+  if (range) {
+    const match = /^bytes=(\d*)-(\d*)$/i.exec(range.trim());
+    if (!match || (!match[1] && !match[2])) {
+      return new Response(null, {
+        status: 416,
+        headers: { "Content-Range": `bytes */${info.size}` },
+      });
+    }
+    if (!match[1]) {
+      const suffix = Math.min(info.size, Number(match[2]));
+      start = info.size - suffix;
+    } else {
+      start = Number(match[1]);
+    }
+    if (match[2] && match[1]) end = Math.min(end, Number(match[2]));
+    if (start < 0 || start >= info.size || end < start) {
+      return new Response(null, {
+        status: 416,
+        headers: { "Content-Range": `bytes */${info.size}` },
+      });
+    }
+    status = 206;
+  }
+
+  const nodeStream = createReadStream(requestedPath, { start, end });
+  const body = Readable.toWeb(nodeStream) as unknown as BodyInit;
+  const headers: Record<string, string> = {
+    "Accept-Ranges": "bytes",
+    "Cache-Control": "no-store",
+    "Content-Length": String(end - start + 1),
+    "Content-Type": contentType,
+  };
+  if (status === 206) {
+    headers["Content-Range"] = `bytes ${start}-${end}/${info.size}`;
+  }
+  return new Response(body, { status, headers });
+}
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -83,11 +150,13 @@ app.whenReady().then(() => {
     if (!allowed.includes(normalizedRequested) && !isScreenshot) {
       return new Response("Media path is not allowed", { status: 403 });
     }
-    // Forward Range headers: large/long videos seek and start without loading
-    // the whole file into memory first.
-    return net.fetch(pathToFileURL(requestedPath).toString(), {
-      headers: request.headers,
-    });
+    try {
+      // A real ranged file stream keeps even large MP4/WebM backgrounds
+      // responsive and never copies or recompresses the user's video.
+      return await streamMedia(requestedPath, request);
+    } catch {
+      return new Response("Media file is unavailable", { status: 404 });
+    }
   });
   registerIpc(() => mainWindow);
   createWindow();

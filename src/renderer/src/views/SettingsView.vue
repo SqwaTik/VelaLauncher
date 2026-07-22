@@ -214,7 +214,7 @@ onBeforeUnmount(() => {
               autoplay
               muted
               loop
-              preload="metadata"
+              preload="auto"
               :style="{ objectFit: settings.backgroundFit }"
             />
             <i
@@ -665,35 +665,33 @@ onBeforeUnmount(() => {
           <div class="setting-icon"><Icon name="rocket" :size="19" /></div>
           <div class="setting-copy">
             <b>Обновление Royale Master</b
-            ><small v-if="launcher.updateInfo"
+            ><small v-if="launcher.updateChecking"
+              >Проверяем сервер обновлений…</small
+            ><small v-else-if="launcher.updateError" class="update-error"
+              >Не удалось проверить: {{ launcher.updateError }}</small
+            ><small v-else-if="launcher.updateInfo"
+              ><template v-if="launcher.updateCheckedAt"
+                >Проверено только что · </template
               >{{
                 !launcher.updateInfo.installed
-                  ? "Клиентский мод ещё не установлен"
+                  ? "Клиент ещё не установлен — установка доступна на главной"
                   : launcher.updateInfo.available
-                    ? "Найден новый коммит"
-                    : "Установлена актуальная версия"
-              }}
-              · {{ launcher.updateInfo.remoteCommitSha?.slice(0, 8)
-              }}<template v-if="launcher.updateInfo.commitMessage">
-                · {{ launcher.updateInfo.commitMessage }}</template
-              ></small
-            ><small v-else>Проверяем GitHub…</small>
+                    ? "Доступна новая версия — кнопка обновления появилась на главной"
+                    : "Установлена последняя доступная версия"
+              }} </small
+            ><small v-else>Нажмите кнопку, чтобы проверить новую версию</small>
           </div>
-          <button class="btn" @click="launcher.checkUpdate()">
-            <Icon name="refresh" :size="15" />Проверить Royale Master
-          </button>
           <button
-            v-if="
-              launcher.updateInfo &&
-              (!launcher.updateInfo.installed || launcher.updateInfo.available)
-            "
-            class="btn btn-primary"
-            @click="launcher.install()"
+            class="btn"
+            :disabled="launcher.updateChecking"
+            @click="launcher.checkUpdate()"
           >
-            <Icon name="download" :size="15" />{{
-              launcher.updateInfo.installed
-                ? "Скачать и обновить"
-                : "Установить Royale Master"
+            <Icon
+              :name="launcher.updateChecking ? 'spinner' : 'refresh'"
+              :size="15"
+              :class="{ spin: launcher.updateChecking }"
+            />{{
+              launcher.updateChecking ? "Проверяем…" : "Проверить обновления"
             }}
           </button>
         </div>
@@ -1089,6 +1087,9 @@ label small {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+.setting-copy small.update-error {
+  color: var(--danger);
 }
 .spin {
   animation: spin 0.75s linear infinite;

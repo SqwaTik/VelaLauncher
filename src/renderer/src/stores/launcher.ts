@@ -36,6 +36,9 @@ export const useLauncherStore = defineStore("launcher", () => {
   const errorText = ref("");
   const installProgress = ref<InstallProgress | null>(null);
   const updateInfo = ref<ClientUpdateInfo | null>(null);
+  const updateChecking = ref(false);
+  const updateError = ref("");
+  const updateCheckedAt = ref<number | null>(null);
   const crash = ref<LaunchStatus | null>(null);
 
   const playtimeMinutes = ref(0);
@@ -179,10 +182,17 @@ export const useLauncherStore = defineStore("launcher", () => {
   }
 
   async function checkUpdate(): Promise<void> {
+    if (updateChecking.value) return;
+    updateChecking.value = true;
+    updateError.value = "";
     try {
       updateInfo.value = await window.royale.game.checkUpdate();
-    } catch {
-      /* offline mode keeps the last known install state */
+    } catch (error) {
+      updateError.value =
+        userFacingError(error) || "Сервис обновлений недоступен";
+    } finally {
+      updateCheckedAt.value = Date.now();
+      updateChecking.value = false;
     }
   }
 
@@ -220,6 +230,9 @@ export const useLauncherStore = defineStore("launcher", () => {
     errorText,
     installProgress,
     updateInfo,
+    updateChecking,
+    updateError,
+    updateCheckedAt,
     crash,
     version,
     isInstalled,

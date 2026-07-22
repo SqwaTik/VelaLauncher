@@ -211,22 +211,14 @@ function confirmRemove(dontAsk: boolean): void {
             <p class="eyebrow">Skin Studio 3D</p>
             <h2>
               {{
-                tr(
-                  "Весь скин, а не только лицо",
-                  "The full skin, not just the face",
-                  "El skin completo, no solo la cara",
-                )
+                tr("Редактирование скина", "Skin editing", "Edición de skins")
               }}
             </h2>
             <p>
-              Вращайте модель, приближайте колёсиком, проверяйте маску, куртку,
-              рукава и штанины. В редакторе доступны оба слоя текстуры.
+              Рисуйте прямо на 3D-модели или текстуре 64×64, переключайте
+              основной и внешний слои, меняйте Classic/Slim и сохраняйте PNG без
+              потери качества.
             </p>
-            <div class="feature-row">
-              <span><Icon name="rotate3d" :size="15" />Свободное вращение</span
-              ><span><Icon name="layers" :size="15" />Внешний слой</span
-              ><span><Icon name="palette" :size="15" />Палитра</span>
-            </div>
           </div>
           <button class="editor-button" @click="showEditor = true">
             <span><Icon name="brush" :size="22" /></span>
