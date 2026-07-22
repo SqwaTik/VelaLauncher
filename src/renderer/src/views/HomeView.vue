@@ -1,0 +1,1123 @@
+<script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { useRouter } from "vue-router";
+import Icon from "@/components/Icon.vue";
+import FabricLogo from "@/components/FabricLogo.vue";
+import { GAME } from "@shared/constants";
+import { useLauncherStore } from "@/stores/launcher";
+import { useAccountStore } from "@/stores/account";
+import { useSettingsStore } from "@/stores/settings";
+import generatedLogo from "@/assets/images/royale-logo-transparent.png";
+import { useLocale } from "@/composables/useLocale";
+
+const router = useRouter();
+const launcher = useLauncherStore();
+const account = useAccountStore();
+const settings = useSettingsStore();
+const { tr } = useLocale();
+const slide = ref(0);
+const galleryHovered = ref(false);
+const contentTab = ref<"content" | "updates">("content");
+const logoYaw = ref(0);
+const logoPitch = ref(0);
+const logoDragging = ref(false);
+let lastPointer = { x: 0, y: 0 };
+let lastPointerAt = 0;
+let logoVelocity = { x: 0, y: 0 };
+let logoInertiaFrame = 0;
+let carouselTimer: ReturnType<typeof setInterval> | null = null;
+let contentRefreshTimer: ReturnType<typeof setInterval> | null = null;
+
+const busy = computed(
+  () =>
+    ["launching", "running"].includes(launcher.state) ||
+    (launcher.state === "downloading" &&
+      launcher.installProgress?.canPause === false) ||
+    account.refreshing,
+);
+const gallery = computed(() => settings.screenshotUrls);
+const currentSlide = computed(() => gallery.value[slide.value] ?? null);
+const logoStyle = computed(() => ({
+  transform: `rotateX(${logoPitch.value}deg) rotateY(${logoYaw.value}deg)`,
+}));
+const actionLabel = computed(() => {
+  if (launcher.state === "paused")
+    return tr("Продолжить", "Resume", "Continuar");
+  if (
+    launcher.state === "downloading" &&
+    launcher.installProgress?.canPause === false
+  )
+    return launcher.installProgress?.phase === "build"
+      ? tr("Сборка клиента…", "Building client…", "Compilando cliente…")
+      : `${Math.floor(launcher.progress)}%`;
+  if (launcher.state === "not-installed")
+    return tr("Установить", "Install", "Instalar");
+  if (launcher.state === "downloading")
+    return `${tr("Пауза", "Pause", "Pausa")} · ${Math.floor(launcher.progress)}%`;
+  if (launcher.state === "launching" || account.refreshing)
+    return tr("Подготовка…", "Preparing…", "Preparando…");
+  if (launcher.state === "running")
+    return tr("Игра запущена", "Game is running", "Juego iniciado");
+  if (launcher.updateInfo?.available)
+    return tr("Обновить", "Update", "Actualizar");
+  if (!account.active)
+    return tr("Выбрать аккаунт", "Choose account", "Elegir cuenta");
+  return tr("Запустить", "Play", "Jugar");
+});
+const actionIcon = computed(() =>
+  launcher.state === "paused"
+    ? "play"
+    : launcher.state === "downloading"
+      ? "pause"
+      : launcher.state === "not-installed" || launcher.updateInfo?.available
+        ? "download"
+        : launcher.state === "running"
+          ? "check"
+          : !account.active
+            ? "user"
+            : "play",
+);
+
+function launch(): void {
+  if (launcher.state === "downloading") void launcher.pause();
+  else if (launcher.state === "paused") void launcher.resume();
+  else if (launcher.state === "not-installed" || launcher.updateInfo?.available)
+    void launcher.install();
+  else if (launcher.state === "installed" && !account.active)
+    void router.push("/account");
+  else if (launcher.state === "installed") void launcher.play();
+}
+function formatBytes(value?: number): string {
+  if (!value) return "";
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(0)} КБ`;
+  return `${(value / 1024 / 1024).toFixed(1)} МБ`;
+}
+function logoPointerDown(event: PointerEvent): void {
+  cancelAnimationFrame(logoInertiaFrame);
+  logoDragging.value = true;
+  lastPointer = { x: event.clientX, y: event.clientY };
+  lastPointerAt = performance.now();
+  logoVelocity = { x: 0, y: 0 };
+  (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+}
+function logoPointerMove(event: PointerEvent): void {
+  if (!logoDragging.value) return;
+  const now = performance.now();
+  const elapsed = Math.max(8, now - lastPointerAt);
+  const dx = event.clientX - lastPointer.x;
+  const dy = event.clientY - lastPointer.y;
+  logoYaw.value += dx * 0.45;
+  logoPitch.value = Math.max(-35, Math.min(35, logoPitch.value - dy * 0.35));
+  logoVelocity = {
+    x: (dx / elapsed) * 7.2,
+    y: (-dy / elapsed) * 5.4,
+  };
+  lastPointer = { x: event.clientX, y: event.clientY };
+  lastPointerAt = now;
+}
+function logoPointerUp(): void {
+  logoDragging.value = false;
+  const tick = (): void => {
+    logoVelocity.x *= 0.92;
+    logoVelocity.y *= 0.9;
+    logoYaw.value += logoVelocity.x;
+    logoPitch.value = Math.max(
+      -35,
+      Math.min(35, logoPitch.value + logoVelocity.y),
+    );
+    if (Math.abs(logoVelocity.x) + Math.abs(logoVelocity.y) > 0.08)
+      logoInertiaFrame = requestAnimationFrame(tick);
+  };
+  logoInertiaFrame = requestAnimationFrame(tick);
+}
+function moveSlide(direction: number): void {
+  if (!gallery.value.length) return;
+  slide.value =
+    (slide.value + direction + gallery.value.length) % gallery.value.length;
+}
+onMounted(() => {
+  void settings.refreshGameContent();
+  void window.royale.discord.activity("В главном меню");
+  carouselTimer = setInterval(() => {
+    if (!galleryHovered.value) moveSlide(1);
+  }, 6000);
+  // Minecraft can add an F2 screenshot while the launcher stays open.
+  // Refreshing the lightweight directory summary keeps the gallery live.
+  contentRefreshTimer = setInterval(
+    () => void settings.refreshGameContent(),
+    4000,
+  );
+});
+onBeforeUnmount(() => {
+  if (carouselTimer) clearInterval(carouselTimer);
+  if (contentRefreshTimer) clearInterval(contentRefreshTimer);
+  cancelAnimationFrame(logoInertiaFrame);
+});
+</script>
+
+<template>
+  <div class="home">
+    <RouterLink to="/account" class="profile-chip">
+      <span class="avatar"
+        ><img v-if="account.active" :src="account.avatar" alt="" /><Icon
+          v-else
+          name="user"
+          :size="19"
+      /></span>
+      <span class="profile-copy"
+        ><b>{{
+          account.active?.username ||
+          tr("Добавить аккаунт", "Add account", "Añadir cuenta")
+        }}</b
+        ><small>{{
+          account.active?.type === "ely"
+            ? "Ely.by"
+            : account.active?.type === "littleskin"
+              ? "LittleSkin"
+              : account.active
+                ? tr(
+                    "Автономный профиль",
+                    "Offline profile",
+                    "Perfil sin conexión",
+                  )
+                : tr(
+                    "Профиль не выбран",
+                    "No profile selected",
+                    "Perfil no seleccionado",
+                  )
+        }}</small></span
+      ><Icon name="chevron" :size="15" />
+    </RouterLink>
+
+    <main class="instance">
+      <h1>Royale <span>Master</span></h1>
+      <p class="instance-description">
+        {{
+          tr(
+            `Готовая клиентская сборка для Minecraft ${GAME.minecraftVersion}`,
+            `A ready-to-play Minecraft ${GAME.minecraftVersion} client`,
+            `Cliente de Minecraft ${GAME.minecraftVersion} listo para jugar`,
+          )
+        }}
+      </p>
+      <div class="inline-stats">
+        <div>
+          <span class="stat-icon fabric"><FabricLogo /></span>
+          <p>
+            <small>{{ tr("Версия", "Version", "Versión") }}</small
+            ><b>{{ GAME.minecraftVersion }} · Fabric</b>
+          </p>
+        </div>
+        <i />
+        <div>
+          <span class="stat-icon"><Icon name="clock" :size="17" /></span>
+          <p>
+            <small>{{ tr("Время в игре", "Playtime", "Tiempo jugado") }}</small
+            ><b>{{ launcher.playtimeLabel }}</b>
+          </p>
+        </div>
+        <i />
+        <div>
+          <span class="stat-icon"><Icon name="refresh" :size="17" /></span>
+          <p>
+            <small>{{
+              tr("Последний запуск", "Last played", "Última sesión")
+            }}</small
+            ><b>{{ launcher.lastPlayedLabel }}</b>
+          </p>
+        </div>
+      </div>
+    </main>
+
+    <section v-if="!gallery.length" class="content-glance">
+      <header class="content-tabs">
+        <button
+          :class="{ active: contentTab === 'content' }"
+          @click="contentTab = 'content'"
+        >
+          {{ tr("Содержимое", "Content", "Contenido") }}
+        </button>
+        <button
+          :class="{ active: contentTab === 'updates' }"
+          @click="contentTab = 'updates'"
+        >
+          {{ tr("Обновления", "Updates", "Actualizaciones") }}
+        </button>
+      </header>
+      <div v-if="contentTab === 'content'" class="content-list">
+        <span
+          ><Icon name="mods" :size="16" /><b
+            >{{ tr("Модов установлено", "Mods installed", "Mods instalados") }}:
+            {{ settings.content.mods }}</b
+          ></span
+        >
+        <span
+          ><Icon name="palette" :size="16" /><b
+            >{{
+              tr("Наборов ресурсов", "Resource packs", "Paquetes de recursos")
+            }}: {{ settings.content.resourcePacks }}</b
+          ></span
+        >
+        <span
+          ><Icon name="sparkles" :size="16" /><b
+            >{{
+              tr("Наборов шейдеров", "Shader packs", "Paquetes de shaders")
+            }}: {{ settings.content.shaderPacks }}</b
+          ></span
+        >
+        <span
+          ><Icon name="globe" :size="16" /><b
+            >{{ tr("Миров", "Worlds", "Mundos") }}:
+            {{ settings.content.worlds }}</b
+          ></span
+        >
+      </div>
+      <div v-else class="update-summary">
+        <Icon
+          :name="launcher.updateInfo?.available ? 'download' : 'check'"
+          :size="24"
+        />
+        <div>
+          <b>{{
+            launcher.updateInfo?.available
+              ? tr(
+                  "Доступно обновление",
+                  "Update available",
+                  "Actualización disponible",
+                )
+              : tr(
+                  "Royale Master актуален",
+                  "Royale Master is up to date",
+                  "Royale Master está actualizado",
+                )
+          }}</b
+          ><small>{{
+            launcher.updateInfo?.commitMessage ||
+            tr(
+              "Последний коммит будет проверен автоматически",
+              "The latest commit is checked automatically",
+              "El último commit se comprueba automáticamente",
+            )
+          }}</small>
+        </div>
+      </div>
+    </section>
+
+    <div
+      v-if="!gallery.length"
+      class="default-visual"
+      :class="{ dragging: logoDragging }"
+      role="img"
+      aria-label="Интерактивный логотип Royale"
+      @pointerdown="logoPointerDown"
+      @pointermove="logoPointerMove"
+      @pointerup="logoPointerUp"
+      @pointercancel="logoPointerUp"
+    >
+      <div class="visual-orbit"><i /><i /><i /></div>
+      <img :src="generatedLogo" :style="logoStyle" alt="" draggable="false" />
+      <div class="visual-caption">
+        <small>ROYALE EDITION</small
+        ><b>MINECRAFT {{ GAME.minecraftVersion }}</b>
+      </div>
+    </div>
+
+    <section
+      v-if="gallery.length"
+      class="gallery-card"
+      @mouseenter="galleryHovered = true"
+      @mouseleave="galleryHovered = false"
+    >
+      <Transition name="gallery" mode="out-in"
+        ><img
+          v-if="currentSlide"
+          :key="currentSlide.url"
+          :src="currentSlide.url"
+          alt="Скриншот Royale Master"
+      /></Transition>
+      <div class="gallery-shade" />
+      <header>
+        <span
+          ><Icon name="gallery" :size="15" />{{
+            tr(
+              "Скриншоты Minecraft",
+              "Minecraft screenshots",
+              "Capturas de Minecraft",
+            )
+          }}</span
+        ><b>{{ slide + 1 }} / {{ gallery.length }}</b>
+      </header>
+      <div class="gallery-actions">
+        <button @click="moveSlide(-1)"><Icon name="back" :size="18" /></button
+        ><button @click="moveSlide(1)">
+          <Icon name="chevron" :size="18" />
+        </button>
+      </div>
+      <nav>
+        <button
+          v-for="(_, index) in gallery"
+          :key="index"
+          :class="{ active: index === slide }"
+          @click="slide = index"
+        />
+      </nav>
+    </section>
+
+    <footer class="home-foot">
+      <div class="quick-links">
+        <RouterLink to="/mods"
+          ><Icon name="mods" :size="17" /><span>{{
+            tr("Моды", "Mods", "Mods")
+          }}</span></RouterLink
+        ><RouterLink to="/settings"
+          ><Icon name="settings" :size="17" /><span>{{
+            tr("Настройки", "Settings", "Ajustes")
+          }}</span></RouterLink
+        ><span class="build-state" :class="{ ok: launcher.isInstalled }"
+          ><i />{{
+            launcher.statusText ||
+            (launcher.updateInfo?.available
+              ? tr(
+                  "Доступно обновление Royale Master",
+                  "Royale Master update available",
+                  "Actualización de Royale Master disponible",
+                )
+              : launcher.isInstalled
+                ? `Royale ${GAME.clientVersion} готов`
+                : tr(
+                    "Требуется установка",
+                    "Installation required",
+                    "Instalación necesaria",
+                  ))
+          }}</span
+        >
+        <span
+          v-if="launcher.installProgress?.bytesPerSecond"
+          class="download-metrics"
+        >
+          {{ formatBytes(launcher.installProgress.downloadedBytes)
+          }}<template v-if="launcher.installProgress.totalBytes">
+            / {{ formatBytes(launcher.installProgress.totalBytes) }}</template
+          >
+          · {{ formatBytes(launcher.installProgress.bytesPerSecond) }}/с
+        </span>
+      </div>
+      <button
+        class="launch-pill"
+        :class="{
+          busy,
+          installing: ['downloading', 'paused'].includes(launcher.state),
+        }"
+        :disabled="busy"
+        @click="launch"
+      >
+        <span
+          v-if="launcher.state === 'downloading' || launcher.state === 'paused'"
+          class="progress"
+          :style="{ width: `${launcher.progress}%` }"
+        /><span class="play-orb"
+          ><Icon
+            :name="actionIcon"
+            :size="21"
+            :class="{ spin: account.refreshing }" /></span
+        ><b>{{ actionLabel }}</b
+        ><span
+          class="launch-settings"
+          @click.stop="
+            ['downloading', 'paused'].includes(launcher.state)
+              ? launcher.cancel()
+              : router.push('/settings')
+          "
+          ><Icon
+            :name="
+              ['downloading', 'paused'].includes(launcher.state)
+                ? 'close'
+                : 'settings'
+            "
+            :size="19"
+        /></span>
+      </button>
+    </footer>
+
+    <Transition name="fade"
+      ><p v-if="launcher.errorText" class="launch-error">
+        <Icon name="alert" :size="16" />{{ launcher.errorText }}
+      </p></Transition
+    >
+  </div>
+</template>
+
+<style scoped lang="scss">
+.home {
+  position: relative;
+  min-height: 100%;
+  padding: 34px 38px 28px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.home::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(
+    90deg,
+    rgba(5, 10, 7, 0.2),
+    transparent 58%,
+    rgba(5, 10, 7, 0.18)
+  );
+}
+.profile-chip {
+  position: absolute;
+  right: 38px;
+  top: 34px;
+  z-index: 3;
+  width: 210px;
+  height: 50px;
+  padding: 5px 10px 5px 6px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: 13px;
+  color: var(--text-2);
+  background: rgba(17, 23, 19, 0.78);
+  border: 1px solid var(--hairline);
+  backdrop-filter: blur(18px);
+  transition:
+    transform 0.3s var(--ease),
+    background 0.3s,
+    border-color 0.3s;
+}
+.profile-chip:hover {
+  transform: translateY(-3px);
+  background: rgba(32, 42, 34, 0.94);
+  border-color: var(--green-line);
+}
+.avatar {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  flex: none;
+  border-radius: 10px;
+  color: var(--text-2);
+  background: var(--surface-3);
+}
+.avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  image-rendering: pixelated;
+}
+.profile-copy {
+  flex: 1;
+  min-width: 0;
+}
+.profile-copy b,
+.profile-copy small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.profile-copy b {
+  color: var(--text-0);
+  font-size: 12.5px;
+}
+.profile-copy small {
+  margin-top: 2px;
+  color: var(--text-3);
+  font-size: 10.5px;
+}
+.instance {
+  margin-top: clamp(34px, 7vh, 74px);
+  max-width: 760px;
+}
+.instance h1 {
+  font-size: clamp(48px, 6.4vw, 78px);
+  line-height: 0.96;
+  letter-spacing: -0.035em;
+  text-shadow: 0 16px 42px #0009;
+}
+.instance h1 span {
+  color: var(--green-bright);
+}
+.instance-description {
+  margin-top: 14px;
+  color: var(--text-1);
+  font-size: 15px;
+}
+.inline-stats {
+  margin-top: 29px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+.inline-stats > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.inline-stats > i {
+  width: 1px;
+  height: 38px;
+  background: var(--hairline-strong);
+}
+.stat-icon {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: var(--green);
+  background: rgba(17, 23, 19, 0.76);
+  border: 1px solid var(--hairline);
+  backdrop-filter: blur(12px);
+}
+.stat-icon.fabric {
+  font-size: 25px;
+}
+.inline-stats small,
+.inline-stats b {
+  display: block;
+}
+.inline-stats small {
+  color: var(--text-3);
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+.inline-stats b {
+  margin-top: 3px;
+  color: var(--text-0);
+  font-family: var(--font-num);
+  font-size: 12px;
+}
+.content-glance {
+  width: min(450px, 44vw);
+  margin-top: clamp(22px, 3.5vh, 36px);
+  padding: 0 15px 14px;
+  border-radius: 14px;
+  background: rgba(13, 19, 15, 0.78);
+  border: 1px solid var(--hairline);
+  backdrop-filter: blur(12px);
+}
+.content-tabs {
+  height: 42px;
+  display: flex;
+  align-items: flex-end;
+  gap: 20px;
+  border-bottom: 1px solid var(--hairline);
+}
+.content-tabs button {
+  position: relative;
+  height: 42px;
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 700;
+}
+.content-tabs button.active {
+  color: var(--text-0);
+}
+.content-tabs button.active::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 3px;
+  border-radius: 3px 3px 0 0;
+  background: var(--green);
+}
+.content-list {
+  padding-top: 8px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 10px;
+}
+.content-list > span {
+  min-height: 35px;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border-radius: 8px;
+  color: var(--green);
+}
+.content-list > span:hover {
+  background: rgba(255, 255, 255, 0.035);
+}
+.content-list b {
+  color: var(--text-1);
+  font-size: 10px;
+  font-weight: 600;
+}
+.update-summary {
+  min-height: 82px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--green);
+}
+.update-summary div {
+  min-width: 0;
+}
+.update-summary b,
+.update-summary small {
+  display: block;
+}
+.update-summary b {
+  color: var(--text-0);
+  font-size: 12px;
+}
+.update-summary small {
+  margin-top: 5px;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.default-visual {
+  position: absolute;
+  right: clamp(72px, 10vw, 150px);
+  top: 50%;
+  width: clamp(270px, 31vw, 410px);
+  aspect-ratio: 1;
+  transform: translateY(-53%);
+  display: grid;
+  place-items: center;
+  filter: drop-shadow(0 28px 58px rgba(0, 0, 0, 0.5));
+  animation: visual-in 0.28s var(--ease) both;
+  cursor: grab;
+  perspective: 900px;
+  touch-action: none;
+  user-select: none;
+}
+.default-visual.dragging {
+  cursor: grabbing;
+}
+.default-visual::before {
+  content: "";
+  position: absolute;
+  inset: 3%;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(45, 210, 87, 0.2),
+    rgba(45, 210, 87, 0.03) 54%,
+    transparent 70%
+  );
+  filter: blur(12px);
+}
+.default-visual img {
+  position: relative;
+  width: 68%;
+  aspect-ratio: 1;
+  object-fit: contain;
+  opacity: 0.96;
+  transform-style: preserve-3d;
+  transition:
+    transform 0.08s linear,
+    filter 0.2s;
+  filter: drop-shadow(0 20px 32px rgba(54, 74, 255, 0.28));
+}
+.default-visual.dragging img {
+  filter: drop-shadow(0 25px 42px rgba(83, 195, 106, 0.34));
+}
+.visual-orbit,
+.visual-orbit i {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(105, 226, 131, 0.17);
+}
+.visual-orbit {
+  animation: orbit 20s linear infinite;
+  pointer-events: none;
+}
+.visual-orbit i:nth-child(1) {
+  inset: 9%;
+  border-style: dashed;
+}
+.visual-orbit i:nth-child(2) {
+  inset: 18%;
+  border-color: rgba(133, 106, 255, 0.24);
+}
+.visual-orbit i:nth-child(3) {
+  inset: 28%;
+  border-color: rgba(99, 220, 128, 0.3);
+  box-shadow: inset 0 0 38px rgba(69, 198, 97, 0.08);
+}
+.visual-caption {
+  position: absolute;
+  right: -1%;
+  bottom: 5%;
+  padding: 10px 14px;
+  border-radius: 11px;
+  text-align: right;
+  background: rgba(10, 17, 12, 0.64);
+  border: 1px solid rgba(120, 224, 142, 0.16);
+  backdrop-filter: blur(14px);
+}
+.visual-caption small,
+.visual-caption b {
+  display: block;
+}
+.visual-caption small {
+  color: var(--green);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+}
+.visual-caption b {
+  margin-top: 3px;
+  color: var(--text-1);
+  font: 600 10px var(--font-num);
+}
+@keyframes visual-in {
+  from {
+    opacity: 0;
+    transform: translateY(-49%) scale(0.92);
+  }
+}
+@keyframes logo-float {
+  50% {
+    transform: rotate(2deg) translateY(-9px);
+  }
+}
+@keyframes orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.gallery-card {
+  position: relative;
+  width: min(520px, 48vw);
+  height: clamp(170px, 26vh, 250px);
+  margin-top: clamp(28px, 5vh, 56px);
+  overflow: hidden;
+  border-radius: 17px;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline-strong);
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.34);
+  animation: card-in 0.24s var(--ease) both;
+}
+.gallery-card > img {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  user-select: none;
+}
+.gallery-shade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0.56),
+    transparent 44%,
+    rgba(0, 0, 0, 0.7)
+  );
+}
+.gallery-card header {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  top: 13px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: #fff;
+}
+.gallery-card header span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.gallery-card header b {
+  font-family: var(--font-num);
+  font-size: 9px;
+}
+.gallery-actions {
+  position: absolute;
+  inset: 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  opacity: 0;
+  transform: scale(0.97);
+  transition:
+    opacity 0.28s,
+    transform 0.3s var(--ease);
+}
+.gallery-card:hover .gallery-actions {
+  opacity: 1;
+  transform: scale(1);
+}
+.gallery-actions button {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: #0b0f0cb8;
+  border: 1px solid #ffffff24;
+  backdrop-filter: blur(10px);
+}
+.gallery-actions button:hover {
+  background: #1c2b20;
+  transform: scale(1.08);
+}
+.gallery-card nav {
+  position: absolute;
+  left: 50%;
+  bottom: 13px;
+  display: flex;
+  gap: 6px;
+  transform: translateX(-50%);
+}
+.gallery-card nav button {
+  width: 7px;
+  height: 7px;
+  border-radius: 8px;
+  background: #fff6;
+}
+.gallery-card nav button.active {
+  width: 24px;
+  background: var(--green);
+  box-shadow: 0 0 10px rgba(83, 195, 106, 0.7);
+}
+.gallery-enter-active,
+.gallery-leave-active {
+  transition:
+    opacity 0.4s,
+    transform 0.5s var(--ease);
+}
+.gallery-enter-from {
+  opacity: 0;
+  transform: scale(1.04);
+}
+.gallery-leave-to {
+  opacity: 0;
+  transform: scale(0.98);
+}
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+}
+.home-foot {
+  margin-top: auto;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  position: relative;
+  z-index: 2;
+}
+.quick-links {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.quick-links > a {
+  height: 40px;
+  padding: 0 13px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border-radius: 10px;
+  color: var(--text-1);
+  background: rgba(17, 23, 19, 0.74);
+  border: 1px solid var(--hairline);
+  backdrop-filter: blur(14px);
+}
+.quick-links > a:hover {
+  color: var(--text-0);
+  background: var(--surface-3);
+  transform: translateY(-3px);
+}
+.build-state {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: 5px;
+  color: var(--text-3);
+  font-size: 11px;
+}
+.build-state i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+.build-state.ok i {
+  background: var(--green);
+  box-shadow: 0 0 8px rgba(83, 195, 106, 0.6);
+}
+.download-metrics {
+  color: var(--text-3);
+  font: 9px var(--font-num);
+}
+.launch-pill {
+  position: relative;
+  width: 286px;
+  height: 66px;
+  padding: 0 8px;
+  display: grid;
+  grid-template-columns: 48px 1fr 42px;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  color: #07130a;
+  background: var(--green-grad);
+  box-shadow: 0 17px 42px rgba(35, 142, 59, 0.34);
+  font-size: 17px;
+  transition:
+    transform 0.32s var(--ease),
+    box-shadow 0.32s,
+    filter 0.3s;
+}
+.launch-pill.installing {
+  width: 232px;
+  grid-template-columns: 42px 1fr 38px;
+  gap: 4px;
+}
+.launch-pill.installing .play-orb {
+  width: 40px;
+  height: 40px;
+}
+.launch-pill.installing .launch-settings {
+  width: 38px;
+  height: 38px;
+}
+.launch-pill:hover:not(:disabled) {
+  transform: translateY(-4px) scale(1.012);
+  box-shadow: 0 24px 58px rgba(35, 142, 59, 0.44);
+  filter: brightness(1.06);
+}
+.launch-pill.busy {
+  color: var(--text-0);
+  background: rgba(32, 42, 34, 0.94);
+}
+.play-orb,
+.launch-settings {
+  position: relative;
+  z-index: 2;
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #ffffff2b;
+}
+.launch-settings {
+  width: 42px;
+  height: 42px;
+  cursor: pointer;
+}
+.launch-settings :deep(svg) {
+  transition: transform 0.24s var(--ease);
+}
+.launch-settings:hover :deep(svg) {
+  transform: rotate(140deg) scale(1.08);
+}
+.launch-pill > b {
+  position: relative;
+  z-index: 2;
+}
+.progress {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--green-grad);
+  transition: width 0.3s linear;
+}
+.launch-error {
+  position: absolute;
+  left: 38px;
+  bottom: 88px;
+  max-width: 540px;
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  color: var(--danger);
+  background: rgba(36, 17, 20, 0.92);
+  border: 1px solid rgba(255, 93, 108, 0.25);
+  font-size: 12px;
+}
+.spin {
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (max-width: 920px) {
+  .default-visual {
+    right: -80px;
+    opacity: 0.28;
+  }
+  .instance {
+    position: relative;
+    z-index: 1;
+  }
+}
+@media (max-width: 760px) {
+  .home {
+    padding: 24px;
+  }
+  .profile-chip {
+    right: 24px;
+    top: 24px;
+    width: 50px;
+  }
+  .profile-copy,
+  .profile-chip > svg {
+    display: none;
+  }
+  .instance {
+    margin-top: 62px;
+  }
+  .inline-stats > i {
+    display: none;
+  }
+  .gallery-card {
+    width: 100%;
+    max-width: 520px;
+  }
+  .default-visual {
+    display: none;
+  }
+  .content-glance {
+    width: 100%;
+    max-width: 520px;
+  }
+  .content-list {
+    grid-template-columns: 1fr 1fr;
+  }
+  .home-foot {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .launch-pill {
+    align-self: flex-end;
+  }
+  .build-state {
+    width: 100%;
+    margin: 4px 0;
+  }
+}
+</style>
