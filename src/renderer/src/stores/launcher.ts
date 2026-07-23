@@ -18,10 +18,13 @@ export type InstallState =
 
 function userFacingError(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
-  return raw
+  const cleaned = raw
     .replace(/^Error invoking remote method '[^']+':\s*/i, "")
     .replace(/^Error:\s*/i, "")
     .trim();
+  if (!cleaned || /^aggregate\s*error$/i.test(cleaned))
+    return "Не удалось подключиться к серверу загрузки. Проверьте интернет и повторите попытку.";
+  return cleaned;
 }
 
 /**

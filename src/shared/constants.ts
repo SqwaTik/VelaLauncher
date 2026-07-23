@@ -114,6 +114,15 @@ export const IPC = {
   modRemove: "mod:remove",
   modReveal: "mod:reveal",
   modProgress: "mod:progress", // main -> renderer (event)
+
+  // modrinth / resource packs
+  resourceSearch: "resource:search",
+  resourceProject: "resource:project",
+  resourceInstallProject: "resource:install-project",
+  resourceInstalledList: "resource:installed-list",
+  resourceRemove: "resource:remove",
+  resourceReveal: "resource:reveal",
+  resourceProgress: "resource:progress",
 } as const;
 
 export const MODRINTH_API = "https://api.modrinth.com/v2";

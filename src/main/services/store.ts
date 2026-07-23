@@ -173,6 +173,10 @@ export async function modsDir(): Promise<string> {
   return join(await gameDir(), "mods");
 }
 
+export async function resourcePacksDir(): Promise<string> {
+  return join(await gameDir(), "resourcepacks");
+}
+
 export function targetVersionId(): string {
   return `fabric-loader-${GAME.fabricLoader}-${GAME.minecraftVersion}`;
 }

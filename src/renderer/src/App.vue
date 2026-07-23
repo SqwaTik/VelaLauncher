@@ -42,11 +42,13 @@ const removeAfterGuard = router.afterEach((to) => {
   const activity =
     to.name === "mods"
       ? "Просматривает моды"
-      : to.name === "account"
-        ? "Настраивает профиль"
-        : to.name === "settings"
-          ? "Настраивает лаунчер"
-          : "В главном меню";
+      : to.name === "resources"
+        ? "Выбирает ресурспаки"
+        : to.name === "account"
+          ? "Настраивает профиль"
+          : to.name === "settings"
+            ? "Настраивает лаунчер"
+            : "В главном меню";
   void window.royale.discord.activity(activity);
 });
 // Load persisted state and wire up IPC event subscriptions once, at startup.

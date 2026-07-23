@@ -24,6 +24,12 @@ const nav = computed(() => [
     label: tr("Моды", "Mods", "Mods"),
     hint: tr("Каталог Modrinth", "Modrinth catalog", "Catálogo Modrinth"),
   },
+  {
+    to: "/resources",
+    icon: "palette",
+    label: tr("Ресурспаки", "Resource packs", "Paquetes"),
+    hint: tr("Текстуры Modrinth", "Modrinth textures", "Texturas Modrinth"),
+  },
 ]);
 
 function isActive(path: string): boolean {

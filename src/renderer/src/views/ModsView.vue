@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { useRoute } from "vue-router";
 import Icon from "@/components/Icon.vue";
 import UiSwitch from "@/components/ui/UiSwitch.vue";
 import FabricLogo from "@/components/FabricLogo.vue";
@@ -8,10 +9,14 @@ import MarkdownContent from "@/components/MarkdownContent.vue";
 import { GAME } from "@shared/constants";
 import type { InstalledMod, ModProject } from "@shared/types";
 import { useModsStore } from "@/stores/mods";
+import { useResourcesStore } from "@/stores/resources";
 import { useSettingsStore } from "@/stores/settings";
 import { useLocale } from "@/composables/useLocale";
 
-const mods = useModsStore();
+const resourceMode = useRoute().name === "resources";
+const mods = (resourceMode
+  ? useResourcesStore()
+  : useModsStore()) as unknown as ReturnType<typeof useModsStore>;
 const settingsStore = useSettingsStore();
 const { language, tr } = useLocale();
 const tab = ref<"market" | "installed">("market");
@@ -32,7 +37,7 @@ const contextMenu = ref<{
   y: number;
 } | null>(null);
 
-const categories = [
+const modCategories = [
   { id: "all", label: "Все категории", icon: "layers" },
   { id: "optimization", label: "Оптимизация", icon: "gauge" },
   { id: "utility", label: "Утилиты", icon: "settings" },
@@ -43,6 +48,20 @@ const categories = [
   { id: "technology", label: "Технологии", icon: "chip" },
   { id: "magic", label: "Магия", icon: "brush" },
 ];
+const resourceCategories = [
+  { id: "all", label: "Все категории", icon: "layers" },
+  { id: "16x-or-lower", label: "16× и меньше", icon: "image" },
+  { id: "32x", label: "32×", icon: "image" },
+  { id: "64x", label: "64×", icon: "image" },
+  { id: "128x", label: "128×", icon: "gallery" },
+  { id: "256x", label: "256×", icon: "gallery" },
+  { id: "512x-or-higher", label: "512× и выше", icon: "expand" },
+  { id: "audio", label: "Звуки", icon: "video" },
+  { id: "fonts", label: "Шрифты", icon: "code" },
+  { id: "gui", label: "Интерфейс", icon: "sliders" },
+  { id: "models", label: "3D-модели", icon: "cube" },
+];
+const categories = resourceMode ? resourceCategories : modCategories;
 const sorts = [
   { id: "relevance", label: "Релевантность" },
   { id: "downloads", label: "Загрузки" },
@@ -100,8 +119,9 @@ function russianCount(
           : many;
   return `${count} ${word}`;
 }
-function install(project: ModProject): void {
-  void mods.installLatest(project);
+async function install(project: ModProject): Promise<void> {
+  await mods.installLatest(project);
+  if (resourceMode) await settingsStore.refreshGameContent();
 }
 function toggleSelected(filename: string): void {
   const next = new Set(selected.value);
@@ -123,6 +143,7 @@ async function askRemove(items: InstalledMod[]): Promise<void> {
   if (!items.length) return;
   if (settingsStore.settings?.confirmModDelete === false) {
     await mods.removeMany(items);
+    if (resourceMode) await settingsStore.refreshGameContent();
     selected.value = new Set();
     return;
   }
@@ -132,6 +153,7 @@ async function confirmRemove(dontAsk: boolean): Promise<void> {
   const items = pendingRemoval.value;
   pendingRemoval.value = [];
   await mods.removeMany(items);
+  if (resourceMode) await settingsStore.refreshGameContent();
   selected.value = new Set();
   if (dontAsk && settingsStore.settings) {
     settingsStore.settings.confirmModDelete = false;
@@ -161,7 +183,11 @@ function openInstalled(item: InstalledMod): void {
     project_id: item.projectId || "",
     slug: item.slug || "",
     title: item.title || item.filename,
-    description: item.description || "Локальный мод без данных каталога.",
+    description:
+      item.description ||
+      (resourceMode
+        ? "Локальный ресурспак без данных каталога."
+        : "Локальный мод без данных каталога."),
     body: item.body,
     author: "",
     downloads: 0,
@@ -169,14 +195,14 @@ function openInstalled(item: InstalledMod): void {
     categories: [],
     icon_url: item.iconUrl || null,
     gallery: item.gallery || [],
-    project_type: "mod",
+    project_type: resourceMode ? "resourcepack" : "mod",
   };
   void openDetails(project, item);
 }
 function external(project: ModProject): void {
   if (project.slug)
     void window.royale.app.openExternal(
-      `https://modrinth.com/mod/${project.slug}`,
+      `https://modrinth.com/${resourceMode ? "resourcepack" : "mod"}/${project.slug}`,
     );
 }
 function removeDetailed(): void {
@@ -204,7 +230,9 @@ async function contextToggle(item: InstalledMod): Promise<void> {
 }
 async function reveal(item: InstalledMod): Promise<void> {
   closeContext();
-  await window.royale.mods.reveal(item.filename);
+  await (resourceMode
+    ? window.royale.resources.reveal(item.filename)
+    : window.royale.mods.reveal(item.filename));
 }
 function contextRemove(item: InstalledMod): void {
   closeContext();
@@ -231,6 +259,7 @@ watch(tab, () => {
 onMounted(async () => {
   window.addEventListener("pointerdown", closeContext);
   window.addEventListener("blur", closeContext);
+  if (resourceMode) (mods as unknown as { subscribe: () => void }).subscribe();
   await mods.loadInstalled();
   await mods.search("", "all", "relevance");
 });
@@ -245,17 +274,30 @@ onBeforeUnmount(() => {
     <header class="mods-head">
       <div>
         <p class="eyebrow">Royale Master</p>
-        <h1>{{ tr("Модификации", "Mods", "Modificaciones") }}</h1>
+        <h1>
+          {{
+            resourceMode
+              ? tr("Ресурспаки", "Resource packs", "Paquetes de recursos")
+              : tr("Модификации", "Mods", "Modificaciones")
+          }}
+        </h1>
       </div>
       <div class="instance-facts">
         <div>
           <small>Minecraft</small><b>{{ GAME.minecraftVersion }}</b>
         </div>
         <i />
-        <div class="fabric-fact">
+        <div v-if="!resourceMode" class="fabric-fact">
           <FabricLogo />
           <p>
             <small>Загрузчик</small><b>Fabric {{ GAME.fabricLoader }}</b>
+          </p>
+        </div>
+        <div v-else class="fabric-fact">
+          <Icon name="palette" :size="24" />
+          <p>
+            <small>{{ tr("Тип", "Type", "Tipo") }}</small
+            ><b>Resource pack</b>
           </p>
         </div>
         <i />
@@ -287,14 +329,26 @@ onBeforeUnmount(() => {
             :placeholder="
               tab === 'market'
                 ? tr(
-                    'Найти мод в Modrinth…',
-                    'Find a mod on Modrinth…',
-                    'Buscar un mod en Modrinth…',
+                    resourceMode
+                      ? 'Найти ресурспак в Modrinth…'
+                      : 'Найти мод в Modrinth…',
+                    resourceMode
+                      ? 'Find a resource pack on Modrinth…'
+                      : 'Find a mod on Modrinth…',
+                    resourceMode
+                      ? 'Buscar un paquete en Modrinth…'
+                      : 'Buscar un mod en Modrinth…',
                   )
                 : tr(
-                    'Поиск среди установленных…',
-                    'Search installed mods…',
-                    'Buscar mods instalados…',
+                    resourceMode
+                      ? 'Поиск среди ресурспаков…'
+                      : 'Поиск среди установленных…',
+                    resourceMode
+                      ? 'Search installed resource packs…'
+                      : 'Search installed mods…',
+                    resourceMode
+                      ? 'Buscar paquetes instalados…'
+                      : 'Buscar mods instalados…',
                   )
             " /></label
         ><button
@@ -314,12 +368,20 @@ onBeforeUnmount(() => {
       <div class="result-line">
         <p>
           <b>{{ mods.totalHits.toLocaleString(language) }}</b>
-          {{ tr("совместимых модов", "compatible mods", "mods compatibles") }}
+          {{
+            resourceMode
+              ? tr(
+                  "совместимых ресурспаков",
+                  "compatible resource packs",
+                  "paquetes compatibles",
+                )
+              : tr("совместимых модов", "compatible mods", "mods compatibles")
+          }}
         </p>
         <div>
           <span v-if="category !== 'all'">{{ activeCategoryLabel }}</span
           ><span>{{ GAME.minecraftVersion }}</span
-          ><span>Fabric</span>
+          ><span>{{ resourceMode ? "Resource pack" : "Fabric" }}</span>
         </div>
       </div>
       <Transition name="fade"
@@ -353,7 +415,11 @@ onBeforeUnmount(() => {
               alt=""
               loading="eager"
               decoding="async"
-            /><Icon v-else name="cube" :size="27" />
+            /><Icon
+              v-else
+              :name="resourceMode ? 'palette' : 'cube'"
+              :size="27"
+            />
           </div>
           <div class="mod-copy">
             <div class="mod-title">
@@ -370,7 +436,7 @@ onBeforeUnmount(() => {
             <p>{{ project.description }}</p>
             <div class="compatibility">
               <span><i />Совместим</span><b>{{ GAME.minecraftVersion }}</b
-              ><b>Fabric</b>
+              ><b>{{ resourceMode ? "ZIP" : "Fabric" }}</b>
             </div>
           </div>
           <div class="mod-actions" @click.stop>
@@ -425,7 +491,14 @@ onBeforeUnmount(() => {
         </button>
         <div>
           <b>{{
-            russianCount(mods.installed.length, "мод", "мода", "модов")
+            resourceMode
+              ? russianCount(
+                  mods.installed.length,
+                  "ресурспак",
+                  "ресурспака",
+                  "ресурспаков",
+                )
+              : russianCount(mods.installed.length, "мод", "мода", "модов")
           }}</b>
         </div>
       </div>
@@ -437,11 +510,11 @@ onBeforeUnmount(() => {
             >
           </p>
           <div>
-            <button @click="bulkToggle(true)">
+            <button v-if="!resourceMode" @click="bulkToggle(true)">
               <Icon name="power" :size="15" />{{
                 tr("Включить", "Enable", "Activar")
               }}</button
-            ><button @click="bulkToggle(false)">
+            ><button v-if="!resourceMode" @click="bulkToggle(false)">
               <Icon name="powerOff" :size="15" />{{
                 tr("Отключить", "Disable", "Desactivar")
               }}</button
@@ -479,7 +552,10 @@ onBeforeUnmount(() => {
               v-if="item.iconUrl"
               :src="item.iconUrl"
               alt=""
-              loading="eager" /><Icon v-else name="cube" :size="22"
+              loading="eager" /><Icon
+              v-else
+              :name="resourceMode ? 'palette' : 'cube'"
+              :size="22"
           /></span>
           <div class="installed-copy">
             <h3>{{ item.title || item.filename }}</h3>
@@ -491,7 +567,7 @@ onBeforeUnmount(() => {
               ></small
             >
           </div>
-          <div @click.stop>
+          <div v-if="!resourceMode" @click.stop>
             <UiSwitch
               :model-value="item.enabled"
               @update:model-value="mods.toggle(item)"
@@ -512,14 +588,18 @@ onBeforeUnmount(() => {
           {{
             mods.installed.length
               ? "По запросу ничего нет"
-              : "Моды ещё не установлены"
+              : resourceMode
+                ? "Ресурспаки ещё не установлены"
+                : "Моды ещё не установлены"
           }}
         </h3>
         <p>
           {{
             mods.installed.length
               ? "Измените строку поиска."
-              : "Откройте Маркет и установите первый мод."
+              : resourceMode
+                ? "Откройте Маркет и установите первый ресурспак."
+                : "Откройте Маркет и установите первый мод."
           }}
         </p>
         <button
@@ -548,12 +628,17 @@ onBeforeUnmount(() => {
                 :src="contextMenu.item.iconUrl"
                 alt=""
               />
-              <Icon v-else name="mods" :size="18" />
+              <Icon
+                v-else
+                :name="resourceMode ? 'palette' : 'mods'"
+                :size="18"
+              />
             </span>
             <div>
               <b>{{ contextMenu.item.title || contextMenu.item.filename }}</b>
               <small>{{
-                contextMenu.item.versionNumber || "Локальный мод"
+                contextMenu.item.versionNumber ||
+                (resourceMode ? "Локальный ресурспак" : "Локальный мод")
               }}</small>
             </div>
           </header>
@@ -568,7 +653,7 @@ onBeforeUnmount(() => {
           <button @click="reveal(contextMenu.item)">
             <Icon name="folder" :size="15" />Показать в папке
           </button>
-          <button @click="contextToggle(contextMenu.item)">
+          <button v-if="!resourceMode" @click="contextToggle(contextMenu.item)">
             <Icon
               :name="contextMenu.item.enabled ? 'powerOff' : 'power'"
               :size="15"
@@ -633,11 +718,18 @@ onBeforeUnmount(() => {
                 ><small>Текущая сборка</small><Icon name="check" :size="16" />
               </div>
             </section>
-            <section>
+            <section v-if="!resourceMode">
               <h3><FabricLogo />Загрузчик</h3>
               <div class="loader-choice">
                 <FabricLogo /><b>Fabric</b><span>{{ GAME.fabricLoader }}</span
                 ><Icon name="check" :size="16" />
+              </div>
+            </section>
+            <section v-else>
+              <h3><Icon name="palette" :size="16" />Формат</h3>
+              <div class="loader-choice">
+                <Icon name="palette" :size="19" /><b>Resource pack</b
+                ><span>ZIP</span><Icon name="check" :size="16" />
               </div>
             </section>
             <section>
@@ -681,11 +773,20 @@ onBeforeUnmount(() => {
                   ><img
                     v-if="detail.project.icon_url"
                     :src="detail.project.icon_url"
-                    alt="" /><Icon v-else name="cube" :size="28"
+                    alt="" /><Icon
+                    v-else
+                    :name="resourceMode ? 'palette' : 'cube'"
+                    :size="28"
                 /></span>
                 <div>
                   <p class="eyebrow">
-                    {{ detail.installed ? "Установленный мод" : "Modrinth" }}
+                    {{
+                      detail.installed
+                        ? resourceMode
+                          ? "Установленный ресурспак"
+                          : "Установленный мод"
+                        : "Modrinth"
+                    }}
                   </p>
                   <h2>{{ detail.project.title }}</h2>
                   <span v-if="detail.project.author"
@@ -712,7 +813,9 @@ onBeforeUnmount(() => {
                       v-if="currentGallery"
                       :key="currentGallery"
                       :src="currentGallery"
-                      alt="Скриншот мода" /></Transition
+                      :alt="
+                        resourceMode ? 'Скриншот ресурспака' : 'Скриншот мода'
+                      " /></Transition
                   ><button
                     class="prev"
                     @click="
@@ -737,7 +840,9 @@ onBeforeUnmount(() => {
                 </section>
                 <div class="detail-meta">
                   <span><i />Совместим с {{ GAME.minecraftVersion }}</span
-                  ><span><FabricLogo />Fabric</span
+                  ><span v-if="!resourceMode"><FabricLogo />Fabric</span
+                  ><span v-else
+                    ><Icon name="palette" :size="14" />Resource pack</span
                   ><span v-if="detail.project.downloads"
                     ><Icon name="download" :size="14" />{{
                       formatDownloads(detail.project.downloads)
@@ -769,7 +874,9 @@ onBeforeUnmount(() => {
                 class="btn btn-danger"
                 @click="removeDetailed"
               >
-                <Icon name="trash" :size="16" />Удалить мод
+                <Icon name="trash" :size="16" />{{
+                  resourceMode ? "Удалить ресурспак" : "Удалить мод"
+                }}
               </button>
             </footer>
           </section>
@@ -780,13 +887,17 @@ onBeforeUnmount(() => {
       v-if="pendingRemoval.length"
       :title="
         pendingRemoval.length === 1
-          ? 'Удалить мод?'
-          : `Удалить ${russianCount(pendingRemoval.length, 'мод', 'мода', 'модов')}?`
+          ? resourceMode
+            ? 'Удалить ресурспак?'
+            : 'Удалить мод?'
+          : `Удалить ${russianCount(pendingRemoval.length, resourceMode ? 'ресурспак' : 'мод', resourceMode ? 'ресурспака' : 'мода', resourceMode ? 'ресурспаков' : 'модов')}?`
       "
       :message="
         pendingRemoval.length === 1
           ? `Файл «${pendingRemoval[0].title || pendingRemoval[0].filename}» будет удалён из сборки.`
-          : 'Выбранные файлы будут удалены из папки mods. Это действие нельзя отменить внутри лаунчера.'
+          : resourceMode
+            ? 'Выбранные файлы будут удалены из папки resourcepacks. Это действие нельзя отменить внутри лаунчера.'
+            : 'Выбранные файлы будут удалены из папки mods. Это действие нельзя отменить внутри лаунчера.'
       "
       @cancel="pendingRemoval = []"
       @confirm="confirmRemove"

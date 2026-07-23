@@ -56,16 +56,17 @@ export const useSettingsStore = defineStore("settings", () => {
   );
 
   async function hydrate(): Promise<void> {
-    const [state, memory, screenshots, summary] = await Promise.all([
-      window.royale.state.get(),
+    const state = await window.royale.state.get();
+    settings.value = state.settings;
+    const [memory, screenshots, summary] = await Promise.allSettled([
       window.royale.app.systemMemory(),
       window.royale.app.screenshots(),
       window.royale.app.contentSummary(),
     ]);
-    settings.value = state.settings;
-    systemMemory.value = memory;
-    screenshotPaths.value = screenshots;
-    content.value = summary;
+    if (memory.status === "fulfilled") systemMemory.value = memory.value;
+    if (screenshots.status === "fulfilled")
+      screenshotPaths.value = screenshots.value;
+    if (summary.status === "fulfilled") content.value = summary.value;
   }
 
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -117,12 +118,13 @@ export const useSettingsStore = defineStore("settings", () => {
   }
 
   async function refreshGameContent(): Promise<void> {
-    const [screenshots, summary] = await Promise.all([
+    const [screenshots, summary] = await Promise.allSettled([
       window.royale.app.screenshots(),
       window.royale.app.contentSummary(),
     ]);
-    screenshotPaths.value = screenshots;
-    content.value = summary;
+    if (screenshots.status === "fulfilled")
+      screenshotPaths.value = screenshots.value;
+    if (summary.status === "fulfilled") content.value = summary.value;
   }
 
   async function pickStorageFolder(): Promise<void> {

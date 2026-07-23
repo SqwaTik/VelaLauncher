@@ -22,6 +22,7 @@ import type {
   GameContentSummary,
   ElyLoginInput,
   LittleSkinLoginInput,
+  InstalledResourcePack,
 } from "../shared/types";
 
 /** Subscribe helper: returns an unsubscribe fn so callers can clean up. */
@@ -176,6 +177,33 @@ const api = {
         error?: string;
       }) => void,
     ): (() => void) => on(IPC.modProgress, cb),
+  },
+  resources: {
+    search: (
+      query: string,
+      category: string,
+      sort: string,
+      offset: number,
+    ): Promise<ModSearchResult> =>
+      ipcRenderer.invoke(IPC.resourceSearch, query, category, sort, offset),
+    project: (projectId: string): Promise<ModProject> =>
+      ipcRenderer.invoke(IPC.resourceProject, projectId),
+    installProject: (projectId: string): Promise<InstalledResourcePack> =>
+      ipcRenderer.invoke(IPC.resourceInstallProject, projectId),
+    installedList: (): Promise<InstalledResourcePack[]> =>
+      ipcRenderer.invoke(IPC.resourceInstalledList),
+    remove: (filename: string): Promise<void> =>
+      ipcRenderer.invoke(IPC.resourceRemove, filename),
+    reveal: (filename: string): Promise<void> =>
+      ipcRenderer.invoke(IPC.resourceReveal, filename),
+    onProgress: (
+      cb: (p: {
+        filename: string;
+        progress: number;
+        done: boolean;
+        error?: string;
+      }) => void,
+    ): (() => void) => on(IPC.resourceProgress, cb),
   },
 };
 

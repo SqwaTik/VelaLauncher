@@ -290,4 +290,22 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.modReveal, (_e, filename: string) =>
     modrinth.revealMod(filename),
   );
+  ipcMain.handle(
+    IPC.resourceSearch,
+    (_e, query: string, category: string, sort: string, offset: number) =>
+      modrinth.searchResourcePacks(query, category, sort, offset),
+  );
+  ipcMain.handle(IPC.resourceProject, (_e, projectId: string) =>
+    modrinth.project(projectId),
+  );
+  ipcMain.handle(IPC.resourceInstallProject, (_e, projectId: string) =>
+    modrinth.installResourceProject(projectId),
+  );
+  ipcMain.handle(IPC.resourceInstalledList, () => modrinth.listResourcePacks());
+  ipcMain.handle(IPC.resourceRemove, (_e, filename: string) =>
+    modrinth.removeResourcePack(filename),
+  );
+  ipcMain.handle(IPC.resourceReveal, (_e, filename: string) =>
+    modrinth.revealResourcePack(filename),
+  );
 }

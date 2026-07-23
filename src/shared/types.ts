@@ -268,6 +268,8 @@ export interface InstalledMod {
   latestVersionNumber?: string;
 }
 
+export interface InstalledResourcePack extends InstalledMod {}
+
 export interface ModInstallResult {
   root: InstalledMod;
   installed: InstalledMod[];

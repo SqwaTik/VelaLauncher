@@ -17,8 +17,9 @@ import type {
   ModSearchResult,
   ModVersionFile,
   InstalledMod,
+  InstalledResourcePack,
 } from "../../shared/types";
-import { modsDir } from "./store";
+import { modsDir, resourcePacksDir } from "./store";
 
 const UA = "SqwaTik/RoyaleLauncher (royale-launcher)";
 const responseCache = new Map<string, { expires: number; value: unknown }>();
@@ -97,17 +98,18 @@ interface RawVersion {
   }[];
 }
 
-export async function search(
+async function searchByType(
   query: string,
   category: string,
   sort: string,
   offset = 0,
+  projectType: "mod" | "resourcepack" = "mod",
 ): Promise<ModSearchResult> {
   const facets: string[][] = [
     [`versions:${GAME.minecraftVersion}`],
-    ["project_type:mod"],
-    ["categories:fabric"],
+    [`project_type:${projectType}`],
   ];
+  if (projectType === "mod") facets.push(["categories:fabric"]);
   if (category && category !== "all") facets.push([`categories:${category}`]);
   const index = [
     "relevance",
@@ -147,6 +149,24 @@ export async function search(
     total_hits: raw.total_hits,
     offset: raw.offset,
   };
+}
+
+export function search(
+  query: string,
+  category: string,
+  sort: string,
+  offset = 0,
+): Promise<ModSearchResult> {
+  return searchByType(query, category, sort, offset, "mod");
+}
+
+export function searchResourcePacks(
+  query: string,
+  category: string,
+  sort: string,
+  offset = 0,
+): Promise<ModSearchResult> {
+  return searchByType(query, category, sort, offset, "resourcepack");
 }
 
 export async function project(projectId: string): Promise<ModProject> {
@@ -240,10 +260,13 @@ interface MetadataShape {
   };
 }
 
-async function readMetadata(dir: string): Promise<MetadataShape> {
+async function readMetadata(
+  dir: string,
+  filename = ".royale-mods.json",
+): Promise<MetadataShape> {
   try {
     return JSON.parse(
-      await fs.readFile(join(dir, ".royale-mods.json"), "utf8"),
+      await fs.readFile(join(dir, filename), "utf8"),
     ) as MetadataShape;
   } catch {
     return {};
@@ -253,8 +276,9 @@ async function readMetadata(dir: string): Promise<MetadataShape> {
 async function writeMetadata(
   dir: string,
   metadata: MetadataShape,
+  filename = ".royale-mods.json",
 ): Promise<void> {
-  const file = join(dir, ".royale-mods.json");
+  const file = join(dir, filename);
   const temp = `${file}.tmp`;
   await fs.writeFile(temp, JSON.stringify(metadata, null, 2), "utf8");
   await fs.rm(file, { force: true });
@@ -483,6 +507,148 @@ export async function installProject(
 
   const root = await resolve(projectId, title, null, true);
   return { root, installed, dependencyTitles };
+}
+
+function emitResourceProgress(
+  filename: string,
+  progress: number,
+  done: boolean,
+  error?: string,
+): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    window.webContents.send(IPC.resourceProgress, {
+      filename,
+      progress,
+      done,
+      error,
+    });
+  }
+}
+
+async function resourceVersions(projectId: string): Promise<ModVersionFile[]> {
+  const raw = await api<RawVersion[]>(`/project/${projectId}/version`, {
+    game_versions: JSON.stringify([GAME.minecraftVersion]),
+    loaders: JSON.stringify(["minecraft"]),
+  });
+  return raw
+    .map(versionFile)
+    .filter((entry): entry is ModVersionFile => Boolean(entry));
+}
+
+async function installResourceFile(
+  version: ModVersionFile,
+  details: ModProject,
+): Promise<InstalledResourcePack> {
+  if (basename(version.filename) !== version.filename)
+    throw new Error("Modrinth вернул некорректное имя ресурспака.");
+  const dir = await resourcePacksDir();
+  await fs.mkdir(dir, { recursive: true });
+  const destination = join(dir, version.filename);
+  const temporary = `${destination}.part`;
+  emitResourceProgress(version.filename, 0, false);
+  const response = await fetch(version.url, { headers: { "User-Agent": UA } });
+  if (!response.ok || !response.body)
+    throw new Error(`Не удалось загрузить ресурспак: ${response.status}`);
+  const total = Number(
+    response.headers.get("content-length") || version.size || 0,
+  );
+  let received = 0;
+  const hash = createHash("sha1");
+  const stream = Readable.fromWeb(
+    response.body as Parameters<typeof Readable.fromWeb>[0],
+  );
+  stream.on("data", (chunk: Buffer) => {
+    received += chunk.length;
+    hash.update(chunk);
+    if (total) emitResourceProgress(version.filename, received / total, false);
+  });
+  try {
+    await pipeline(stream, createWriteStream(temporary));
+    if (version.sha1 && hash.digest("hex") !== version.sha1)
+      throw new Error("Ресурспак не прошёл проверку SHA-1.");
+    await fs.rm(destination, { force: true });
+    await fs.rename(temporary, destination);
+  } catch (error) {
+    await fs.rm(temporary, { force: true });
+    emitResourceProgress(version.filename, 0, true, "Ошибка загрузки");
+    throw error;
+  }
+  const metadata = await readMetadata(dir, ".royale-resources.json");
+  metadata[version.filename] = {
+    projectId: details.project_id,
+    title: details.title,
+    versionNumber: version.version_number,
+    versionId: version.version_id,
+    slug: details.slug,
+    description: details.description,
+    body: details.body,
+    iconUrl: details.icon_url,
+    gallery: details.gallery,
+  };
+  await writeMetadata(dir, metadata, ".royale-resources.json");
+  emitResourceProgress(version.filename, 1, true);
+  return {
+    filename: version.filename,
+    size: (await fs.stat(destination)).size,
+    enabled: true,
+    ...metadata[version.filename],
+  };
+}
+
+export async function installResourceProject(
+  projectId: string,
+): Promise<InstalledResourcePack> {
+  const existing = await listResourcePacks();
+  const installed = existing.find((pack) => pack.projectId === projectId);
+  if (installed) return installed;
+  const details = await project(projectId);
+  if (details.project_type !== "resourcepack")
+    throw new Error("Выбранный проект не является ресурспаком.");
+  const compatible = (await resourceVersions(projectId))[0];
+  if (!compatible)
+    throw new Error(
+      `Для ${details.title} нет версии под Minecraft ${GAME.minecraftVersion}.`,
+    );
+  return installResourceFile(compatible, details);
+}
+
+export async function listResourcePacks(): Promise<InstalledResourcePack[]> {
+  const dir = await resourcePacksDir();
+  if (!existsSync(dir)) return [];
+  const metadata = await readMetadata(dir, ".royale-resources.json");
+  const files = await fs.readdir(dir, { withFileTypes: true });
+  const result: InstalledResourcePack[] = [];
+  for (const entry of files) {
+    if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".zip")) continue;
+    result.push({
+      filename: entry.name,
+      size: (await fs.stat(join(dir, entry.name))).size,
+      enabled: true,
+      ...metadata[entry.name],
+    });
+  }
+  return result.sort((a, b) =>
+    (a.title || a.filename).localeCompare(b.title || b.filename),
+  );
+}
+
+export async function removeResourcePack(filename: string): Promise<void> {
+  if (basename(filename) !== filename)
+    throw new Error("Некорректное имя ресурспака.");
+  const dir = await resourcePacksDir();
+  await fs.rm(join(dir, filename), { force: true });
+  const metadata = await readMetadata(dir, ".royale-resources.json");
+  delete metadata[filename];
+  await writeMetadata(dir, metadata, ".royale-resources.json");
+}
+
+export async function revealResourcePack(filename: string): Promise<void> {
+  if (basename(filename) !== filename)
+    throw new Error("Некорректное имя ресурспака.");
+  const dir = await resourcePacksDir();
+  const target = join(dir, filename);
+  if (existsSync(target)) shell.showItemInFolder(target);
+  else await shell.openPath(dir);
 }
 
 export async function listInstalled(): Promise<InstalledMod[]> {

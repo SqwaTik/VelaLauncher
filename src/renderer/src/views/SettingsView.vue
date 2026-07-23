@@ -62,15 +62,31 @@ const selectedMemory = computed(() => {
   return `${(settings.value.memoryMinMb / 1024).toFixed(1)}–${(settings.value.memoryMb / 1024).toFixed(1)} ГБ`;
 });
 
-let observer: IntersectionObserver | null = null;
 let scrollRoot: HTMLElement | null = null;
-function syncBottomNavigation(): void {
-  if (!scrollRoot) return;
-  if (
-    scrollRoot.scrollHeight - scrollRoot.scrollTop - scrollRoot.clientHeight <
-    16
-  )
-    active.value = sections.at(-1)!.id;
+let manualTarget: string | null = null;
+let scrollFrame = 0;
+let unlockTimer: ReturnType<typeof setTimeout> | null = null;
+
+function syncNavigation(): void {
+  if (!scrollRoot || manualTarget) return;
+  cancelAnimationFrame(scrollFrame);
+  scrollFrame = requestAnimationFrame(() => {
+    if (!scrollRoot || manualTarget) return;
+    const rootTop = scrollRoot.getBoundingClientRect().top;
+    const marker = rootTop + 96;
+    let current = sections[0].id;
+    for (const section of sections) {
+      const element = document.getElementById(`settings-${section.id}`);
+      if (element && element.getBoundingClientRect().top <= marker)
+        current = section.id;
+    }
+    if (
+      scrollRoot.scrollHeight - scrollRoot.scrollTop - scrollRoot.clientHeight <
+      24
+    )
+      current = sections.at(-1)!.id;
+    active.value = current;
+  });
 }
 
 function save(): void {
@@ -78,9 +94,24 @@ function save(): void {
 }
 function scrollTo(id: string): void {
   active.value = id;
-  document
-    .getElementById(`settings-${id}`)
-    ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  manualTarget = id;
+  if (unlockTimer) clearTimeout(unlockTimer);
+  const element = document.getElementById(`settings-${id}`);
+  if (scrollRoot && element) {
+    const rootTop = scrollRoot.getBoundingClientRect().top;
+    const destination =
+      scrollRoot.scrollTop + element.getBoundingClientRect().top - rootTop - 20;
+    scrollRoot.scrollTo({ top: destination, behavior: "smooth" });
+  }
+  unlockTimer = setTimeout(() => {
+    manualTarget = null;
+    syncNavigation();
+  }, 420);
+}
+async function replayOnboarding(): Promise<void> {
+  if (!settings.value) return;
+  settings.value.onboardingCompleted = false;
+  await store.saveNow();
 }
 function setMemoryMode(mode: "system" | "auto" | "manual"): void {
   if (!settings.value) return;
@@ -124,31 +155,16 @@ onMounted(async () => {
   if (!store.settings) await store.hydrate();
   if (!store.java) void store.detectJava();
   scrollRoot = document.querySelector<HTMLElement>(".content");
-  scrollRoot?.addEventListener("scroll", syncBottomNavigation, {
+  scrollRoot?.addEventListener("scroll", syncNavigation, {
     passive: true,
   });
-  observer = new IntersectionObserver(
-    (entries) => {
-      const visible = entries
-        .filter((entry) => entry.isIntersecting)
-        .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
-      if (visible) active.value = visible.target.id.replace("settings-", "");
-    },
-    {
-      root: scrollRoot,
-      rootMargin: "-10% 0px -45% 0px",
-      threshold: [0, 0.2, 0.5],
-    },
-  );
-  sections.forEach((section) => {
-    const element = document.getElementById(`settings-${section.id}`);
-    if (element) observer?.observe(element);
-  });
+  syncNavigation();
   void launcher.checkUpdate();
 });
 onBeforeUnmount(() => {
-  observer?.disconnect();
-  scrollRoot?.removeEventListener("scroll", syncBottomNavigation);
+  if (unlockTimer) clearTimeout(unlockTimer);
+  cancelAnimationFrame(scrollFrame);
+  scrollRoot?.removeEventListener("scroll", syncNavigation);
 });
 </script>
 
@@ -300,6 +316,26 @@ onBeforeUnmount(() => {
           </div>
           <span>{{ tr("Изменить", "Change", "Cambiar") }}</span
           ><Icon name="chevron" :size="16" />
+        </button>
+        <button
+          class="setting-card compact language-button"
+          @click="replayOnboarding"
+        >
+          <div class="setting-icon"><Icon name="sparkles" :size="18" /></div>
+          <div class="setting-copy">
+            <b>{{
+              tr("Обучение по лаунчеру", "Launcher tour", "Guía del launcher")
+            }}</b>
+            <small>{{
+              tr(
+                "Снова показать знакомство с Royale и основные шаги настройки.",
+                "Show the Royale introduction and setup steps again.",
+                "Vuelve a mostrar la introducción y los pasos de configuración.",
+              )
+            }}</small>
+          </div>
+          <span>{{ tr("Показать", "Open", "Abrir") }}</span>
+          <Icon name="chevron" :size="16" />
         </button>
       </section>
 
@@ -540,22 +576,6 @@ onBeforeUnmount(() => {
             @change="detectJava"
           />
         </div>
-        <div class="setting-card compact">
-          <div class="setting-icon"><Icon name="download" :size="18" /></div>
-          <div class="setting-copy">
-            <b>Автоматически установить Java {{ GAME.javaMajor }}</b
-            ><small
-              >Переносимый Temurin будет сохранён в .royale/jre/java{{
-                GAME.javaMajor
-              }}
-              без изменения системы.</small
-            >
-          </div>
-          <UiSwitch
-            v-model="settings.autoInstallJava"
-            @update:model-value="save"
-          />
-        </div>
         <div class="setting-card advanced-grid">
           <label
             ><b>Команда перед запуском</b
@@ -574,21 +594,30 @@ onBeforeUnmount(() => {
               placeholder="Например: -XX:+UseG1GC"
               @change="save"
           /></label>
+        </div>
+        <div class="setting-card column standalone-field">
           <label
             ><b>Аргументы Minecraft</b
-            ><small>Дополнительные параметры после main class</small
+            ><small
+              >Дополнительные параметры запуска игры после main class. По
+              умолчанию поле остаётся пустым.</small
             ><input
               v-model="settings.minecraftArgs"
               class="control wide"
               placeholder="Например: --width 1280 --height 720"
               @change="save"
           /></label>
+        </div>
+        <div class="setting-card column standalone-field">
           <label
-            ><b>Переменные среды</b><small>Одна строка KEY=value</small
+            ><b>Переменные среды</b
+            ><small
+              >По одной паре KEY=value на строку. Значения применяются только к
+              Minecraft.</small
             ><textarea
               v-model="settings.environmentVariables"
               class="control wide multiline"
-              placeholder="MESA_GL_VERSION_OVERRIDE=4.6"
+              placeholder="Например: MESA_GL_VERSION_OVERRIDE=4.6"
               @change="save"
             />
           </label>

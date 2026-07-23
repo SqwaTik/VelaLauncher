@@ -17,7 +17,7 @@ const settings = useSettingsStore();
 const { tr } = useLocale();
 const slide = ref(0);
 const galleryHovered = ref(false);
-const dashboardExpanded = ref(false);
+const galleryExpanded = ref(false);
 const logoYaw = ref(0);
 const logoPitch = ref(0);
 const logoDragging = ref(false);
@@ -76,6 +76,62 @@ const actionIcon = computed(() =>
           : !account.active
             ? "user"
             : "play",
+);
+const operationTitle = computed(() => {
+  if (launcher.state === "paused")
+    return tr(
+      "Установка приостановлена",
+      "Installation paused",
+      "Instalación en pausa",
+    );
+  if (launcher.state === "downloading")
+    return tr(
+      "Устанавливаем Royale Master",
+      "Installing Royale Master",
+      "Instalando Royale Master",
+    );
+  if (launcher.state === "launching" || account.refreshing)
+    return tr(
+      "Подготавливаем запуск",
+      "Preparing launch",
+      "Preparando el inicio",
+    );
+  if (launcher.state === "running")
+    return tr(
+      "Minecraft запущен",
+      "Minecraft is running",
+      "Minecraft está iniciado",
+    );
+  if (launcher.updateInfo?.available)
+    return tr(
+      "Доступно обновление",
+      "Update available",
+      "Actualización disponible",
+    );
+  if (launcher.isInstalled)
+    return tr("Готово к запуску", "Ready to play", "Listo para jugar");
+  return tr(
+    "Требуется установка",
+    "Installation required",
+    "Instalación necesaria",
+  );
+});
+const operationDetail = computed(
+  () =>
+    launcher.statusText ||
+    (launcher.updateInfo?.available
+      ? tr(
+          "Новая версия Royale Master готова к загрузке",
+          "A new Royale Master version is ready",
+          "Hay una nueva versión de Royale Master",
+        )
+      : launcher.isInstalled
+        ? `Royale ${GAME.clientVersion}`
+        : tr(
+            "Minecraft, Fabric и Java будут подготовлены автоматически",
+            "Minecraft, Fabric and Java will be prepared automatically",
+            "Minecraft, Fabric y Java se prepararán automáticamente",
+          )),
 );
 
 function launch(): void {
@@ -248,7 +304,6 @@ onBeforeUnmount(() => {
     </main>
 
     <div
-      v-if="!dashboardExpanded"
       class="default-visual"
       :class="{ dragging: logoDragging }"
       role="img"
@@ -268,7 +323,6 @@ onBeforeUnmount(() => {
 
     <section
       class="content-dashboard"
-      :class="{ expanded: dashboardExpanded }"
       @mouseenter="galleryHovered = true"
       @mouseleave="galleryHovered = false"
     >
@@ -348,13 +402,19 @@ onBeforeUnmount(() => {
         </div>
       </article>
 
-      <article class="dashboard-card resources-card">
+      <article
+        class="dashboard-card resources-card"
+        @dblclick="router.push('/resources')"
+      >
         <header>
           <span
             ><Icon name="palette" :size="18" />{{
               tr("Ресурсы", "Resources", "Recursos")
             }}</span
           >
+          <button title="Открыть ресурспаки" @click="router.push('/resources')">
+            <Icon name="chevron" :size="15" />
+          </button>
         </header>
         <div class="card-count">
           <b>{{ settings.content.resourcePacks }}</b
@@ -398,11 +458,8 @@ onBeforeUnmount(() => {
             <small v-if="gallery.length"
               >{{ slide + 1 }} / {{ gallery.length }}</small
             >
-            <button
-              :title="dashboardExpanded ? 'Свернуть' : 'Развернуть'"
-              @click="dashboardExpanded = !dashboardExpanded"
-            >
-              <Icon :name="dashboardExpanded ? 'close' : 'expand'" :size="15" />
+            <button title="Развернуть галерею" @click="galleryExpanded = true">
+              <Icon name="expand" :size="15" />
             </button>
           </div>
         </header>
@@ -431,6 +488,73 @@ onBeforeUnmount(() => {
       </article>
     </section>
 
+    <Teleport to="body">
+      <Transition name="gallery-modal">
+        <div
+          v-if="galleryExpanded"
+          class="gallery-lightbox"
+          @click.self="galleryExpanded = false"
+        >
+          <section>
+            <header>
+              <div>
+                <Icon name="gallery" :size="19" />
+                <span
+                  ><b>{{
+                    tr(
+                      "Галерея скриншотов",
+                      "Screenshot gallery",
+                      "Galería de capturas",
+                    )
+                  }}</b
+                  ><small v-if="gallery.length"
+                    >{{ slide + 1 }} / {{ gallery.length }}</small
+                  ></span
+                >
+              </div>
+              <button title="Закрыть" @click="galleryExpanded = false">
+                <Icon name="close" :size="19" />
+              </button>
+            </header>
+            <div class="lightbox-stage">
+              <Transition name="gallery" mode="out-in">
+                <img
+                  v-if="currentSlide"
+                  :key="currentSlide.url"
+                  :src="currentSlide.url"
+                  alt="Скриншот Minecraft"
+                />
+              </Transition>
+              <div v-if="!currentSlide" class="lightbox-empty">
+                <Icon name="gallery" :size="42" /><b>{{
+                  tr(
+                    "Пока нет снимков",
+                    "No screenshots yet",
+                    "Aún no hay capturas",
+                  )
+                }}</b
+                ><small>{{
+                  tr(
+                    "Скриншоты из папки Minecraft появятся здесь автоматически.",
+                    "Minecraft screenshots will appear here automatically.",
+                    "Las capturas de Minecraft aparecerán aquí automáticamente.",
+                  )
+                }}</small>
+              </div>
+              <template v-else>
+                <button class="lightbox-prev" @click="moveSlide(-1)">
+                  <Icon name="back" :size="22" />
+                </button>
+                <button class="lightbox-next" @click="moveSlide(1)">
+                  <Icon name="chevron" :size="22" />
+                </button>
+              </template>
+            </div>
+          </section>
+        </div>
+      </Transition>
+    </Teleport>
+
     <footer class="home-foot">
       <div class="quick-links">
         <RouterLink to="/mods"
@@ -441,70 +565,79 @@ onBeforeUnmount(() => {
           ><Icon name="settings" :size="17" /><span>{{
             tr("Настройки", "Settings", "Ajustes")
           }}</span></RouterLink
-        ><span class="build-state" :class="{ ok: launcher.isInstalled }"
-          ><i />{{
-            launcher.statusText ||
-            (launcher.updateInfo?.available
-              ? tr(
-                  "Доступно обновление Royale Master",
-                  "Royale Master update available",
-                  "Actualización de Royale Master disponible",
-                )
-              : launcher.isInstalled
-                ? `Royale ${GAME.clientVersion} готов`
-                : tr(
-                    "Требуется установка",
-                    "Installation required",
-                    "Instalación necesaria",
-                  ))
-          }}</span
         >
-        <span
-          v-if="launcher.installProgress?.bytesPerSecond"
-          class="download-metrics"
-        >
-          {{ formatBytes(launcher.installProgress.downloadedBytes)
-          }}<template v-if="launcher.installProgress.totalBytes">
-            / {{ formatBytes(launcher.installProgress.totalBytes) }}</template
-          >
-          · {{ formatBytes(launcher.installProgress.bytesPerSecond) }}/с
-        </span>
       </div>
-      <button
-        class="launch-pill"
-        :class="{
-          busy,
-          installing: ['downloading', 'paused'].includes(launcher.state),
-        }"
-        :disabled="busy"
-        @click="launch"
-      >
-        <span
-          v-if="launcher.state === 'downloading' || launcher.state === 'paused'"
-          class="progress"
-          :style="{ width: `${launcher.progress}%` }"
-        /><span class="play-orb"
-          ><Icon
-            :name="actionIcon"
-            :size="21"
-            :class="{ spin: account.refreshing }" /></span
-        ><b>{{ actionLabel }}</b
-        ><span
-          class="launch-settings"
-          @click.stop="
-            ['downloading', 'paused'].includes(launcher.state)
-              ? launcher.cancel()
-              : router.push('/settings')
-          "
-          ><Icon
-            :name="
-              ['downloading', 'paused'].includes(launcher.state)
-                ? 'close'
-                : 'settings'
+      <div class="launch-zone">
+        <div class="operation-status" :class="launcher.state">
+          <span class="operation-dot"
+            ><Icon
+              :name="
+                ['downloading', 'launching'].includes(launcher.state)
+                  ? 'spinner'
+                  : launcher.state === 'paused'
+                    ? 'pause'
+                    : launcher.isInstalled
+                      ? 'check'
+                      : 'download'
+              "
+              :size="15"
+              :class="{
+                spin: ['downloading', 'launching'].includes(launcher.state),
+              }"
+          /></span>
+          <span
+            ><b>{{ operationTitle }}</b
+            ><small>{{ operationDetail }}</small></span
+          >
+          <span
+            v-if="launcher.installProgress?.bytesPerSecond"
+            class="download-metrics"
+          >
+            {{ formatBytes(launcher.installProgress.downloadedBytes)
+            }}<template v-if="launcher.installProgress.totalBytes">
+              / {{ formatBytes(launcher.installProgress.totalBytes) }}</template
+            >
+            · {{ formatBytes(launcher.installProgress.bytesPerSecond) }}/с
+          </span>
+        </div>
+        <button
+          class="launch-pill"
+          :class="{
+            busy,
+            installing: ['downloading', 'paused'].includes(launcher.state),
+          }"
+          :disabled="busy"
+          @click="launch"
+        >
+          <span
+            v-if="
+              launcher.state === 'downloading' || launcher.state === 'paused'
             "
-            :size="19"
-        /></span>
-      </button>
+            class="progress"
+            :style="{ width: `${launcher.progress}%` }"
+          /><span class="play-orb"
+            ><Icon
+              :name="actionIcon"
+              :size="21"
+              :class="{ spin: account.refreshing }" /></span
+          ><b>{{ actionLabel }}</b
+          ><span
+            class="launch-settings"
+            @click.stop="
+              ['downloading', 'paused'].includes(launcher.state)
+                ? launcher.cancel()
+                : router.push('/settings')
+            "
+            ><Icon
+              :name="
+                ['downloading', 'paused'].includes(launcher.state)
+                  ? 'close'
+                  : 'settings'
+              "
+              :size="19"
+          /></span>
+        </button>
+      </div>
     </footer>
 
     <Transition name="fade"
@@ -751,9 +884,9 @@ onBeforeUnmount(() => {
 }
 .default-visual {
   position: absolute;
-  right: clamp(72px, 10vw, 150px);
-  top: 50%;
-  width: clamp(270px, 31vw, 410px);
+  right: clamp(32px, 5vw, 70px);
+  top: 49%;
+  width: clamp(230px, 25vw, 300px);
   aspect-ratio: 1;
   transform: translateY(-53%);
   display: grid;
@@ -992,6 +1125,62 @@ onBeforeUnmount(() => {
   position: relative;
   z-index: 2;
 }
+.launch-zone {
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 9px;
+}
+.operation-status {
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 10px;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  border-radius: 12px;
+  color: var(--text-1);
+  background: rgba(12, 18, 14, 0.86);
+  border: 1px solid var(--hairline);
+  box-shadow: 0 12px 30px #0004;
+  backdrop-filter: blur(18px);
+}
+.operation-status.downloading,
+.operation-status.paused,
+.operation-status.launching {
+  border-color: var(--green-line);
+  background: rgba(16, 32, 21, 0.94);
+}
+.operation-dot {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  color: var(--green-bright);
+  background: var(--green-soft);
+}
+.operation-status > span:nth-child(2) {
+  min-width: 0;
+}
+.operation-status b,
+.operation-status small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.operation-status b {
+  color: var(--text-0);
+  font-size: 11px;
+}
+.operation-status small {
+  margin-top: 2px;
+  color: var(--text-3);
+  font-size: 9px;
+}
 .quick-links {
   display: flex;
   align-items: center;
@@ -1034,7 +1223,8 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 8px rgba(83, 195, 106, 0.6);
 }
 .download-metrics {
-  color: var(--text-3);
+  grid-column: 2;
+  color: var(--green-bright);
   font: 9px var(--font-num);
 }
 .launch-pill {
@@ -1128,39 +1318,14 @@ onBeforeUnmount(() => {
 .content-dashboard {
   position: relative;
   z-index: 3;
-  width: min(760px, calc(100vw - 230px));
+  width: min(650px, calc(100vw - 420px));
   height: 222px;
   margin-top: clamp(18px, 2.8vh, 28px);
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   grid-template-rows: repeat(2, minmax(0, 1fr));
   gap: 8px;
-  transition:
-    width 0.18s var(--ease),
-    height 0.18s var(--ease),
-    background 0.18s ease;
-}
-.content-dashboard.expanded {
-  position: fixed;
-  inset: calc(var(--titlebar-h) + 14px) 18px 18px 96px;
-  z-index: 620;
-  width: auto;
-  height: auto;
-  margin: 0;
-  padding: 12px;
-  gap: 12px;
-  border: 1px solid var(--hairline-strong);
-  border-radius: 18px;
-  background: rgba(10, 13, 12, 0.96);
-  box-shadow: 0 30px 100px #000c;
-  backdrop-filter: blur(24px);
-  animation: dashboard-expand 0.18s var(--ease) both;
-}
-@keyframes dashboard-expand {
-  from {
-    opacity: 0;
-    transform: scale(0.985);
-  }
+  transition: width 0.18s var(--ease);
 }
 .dashboard-card {
   position: relative;
@@ -1328,18 +1493,122 @@ onBeforeUnmount(() => {
   width: 18px;
   background: var(--green);
 }
-.content-dashboard.expanded .dashboard-card {
-  padding: 20px;
-  border-radius: 15px;
+.gallery-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: grid;
+  place-items: center;
+  padding: 34px;
+  background: rgba(3, 7, 5, 0.82);
+  backdrop-filter: blur(18px);
 }
-.content-dashboard.expanded .screenshots-card {
-  padding: 0;
+.gallery-lightbox > section {
+  width: min(1040px, 92vw);
+  height: min(720px, 84vh);
+  display: grid;
+  grid-template-rows: 58px minmax(0, 1fr);
+  overflow: hidden;
+  border-radius: 18px;
+  background: #0d120f;
+  border: 1px solid var(--hairline-strong);
+  box-shadow: 0 34px 110px #000d;
 }
-.content-dashboard.expanded .dashboard-card > header > span {
-  font-size: 14px;
+.gallery-lightbox header {
+  padding: 0 16px 0 19px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--hairline);
 }
-.content-dashboard.expanded .card-count b {
-  font-size: 42px;
+.gallery-lightbox header > div,
+.gallery-lightbox header span {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.gallery-lightbox header svg {
+  color: var(--green);
+}
+.gallery-lightbox header b {
+  font-size: 13px;
+}
+.gallery-lightbox header small {
+  color: var(--text-3);
+  font: 10px var(--font-num);
+}
+.gallery-lightbox header button {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: var(--text-2);
+  background: var(--surface-3);
+}
+.lightbox-stage {
+  position: relative;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+.lightbox-stage > img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.lightbox-prev,
+.lightbox-next {
+  position: absolute;
+  top: 50%;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  color: #fff;
+  background: #070a08b8;
+  border: 1px solid #ffffff24;
+  transform: translateY(-50%);
+}
+.lightbox-prev {
+  left: 16px;
+}
+.lightbox-next {
+  right: 16px;
+}
+.lightbox-empty {
+  display: grid;
+  justify-items: center;
+  gap: 9px;
+  color: var(--text-3);
+  text-align: center;
+}
+.lightbox-empty b {
+  color: var(--text-1);
+}
+.lightbox-empty small {
+  max-width: 360px;
+}
+.gallery-modal-enter-active,
+.gallery-modal-leave-active {
+  transition: opacity 0.18s ease;
+}
+.gallery-modal-enter-active > section,
+.gallery-modal-leave-active > section {
+  transition:
+    transform 0.2s var(--ease),
+    opacity 0.18s;
+}
+.gallery-modal-enter-from,
+.gallery-modal-leave-to {
+  opacity: 0;
+}
+.gallery-modal-enter-from > section,
+.gallery-modal-leave-to > section {
+  opacity: 0;
+  transform: scale(0.975) translateY(8px);
 }
 .spin {
   animation: spin 0.8s linear infinite;
@@ -1351,8 +1620,8 @@ onBeforeUnmount(() => {
 }
 @media (max-width: 920px) {
   .default-visual {
-    right: -80px;
-    opacity: 0.28;
+    right: -40px;
+    opacity: 0.2;
   }
   .instance {
     position: relative;
@@ -1389,19 +1658,19 @@ onBeforeUnmount(() => {
     width: 100%;
     max-width: 520px;
   }
-  .content-dashboard:not(.expanded) {
+  .content-dashboard {
     width: 100%;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .content-dashboard:not(.expanded) .mods-card {
+  .content-dashboard .mods-card {
     grid-column: 1;
   }
-  .content-dashboard:not(.expanded) .resources-card {
+  .content-dashboard .resources-card {
     grid-column: 2;
   }
-  .content-dashboard:not(.expanded) .worlds-card,
-  .content-dashboard:not(.expanded) .shaders-card,
-  .content-dashboard:not(.expanded) .screenshots-card {
+  .content-dashboard .worlds-card,
+  .content-dashboard .shaders-card,
+  .content-dashboard .screenshots-card {
     display: none;
   }
   .content-list {
@@ -1410,6 +1679,13 @@ onBeforeUnmount(() => {
   .home-foot {
     align-items: stretch;
     flex-direction: column;
+  }
+  .launch-zone {
+    width: 100%;
+    align-items: stretch;
+  }
+  .operation-status {
+    max-width: 420px;
   }
   .launch-pill {
     align-self: flex-end;

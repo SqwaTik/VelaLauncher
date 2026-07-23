@@ -509,14 +509,37 @@ export async function cancelInstall(): Promise<boolean> {
   return hadActiveInstall;
 }
 
+function installationErrorMessage(error: unknown): string {
+  const messages: string[] = [];
+  const visit = (value: unknown): void => {
+    if (!value) return;
+    if (value instanceof AggregateError) {
+      for (const nested of value.errors) visit(nested);
+      if (value.cause) visit(value.cause);
+      return;
+    }
+    if (value instanceof Error) {
+      if (value.message && !/^aggregate\s*error$/i.test(value.message))
+        messages.push(value.message);
+      if (value.cause) visit(value.cause);
+      return;
+    }
+    if (typeof value === "string" && value.trim()) messages.push(value.trim());
+  };
+  visit(error);
+  const unique = [...new Set(messages.map((message) => message.trim()))];
+  if (!unique.length)
+    return "Не удалось подключиться к серверу загрузки. Проверьте интернет и повторите попытку.";
+  return unique.join(" · ");
+}
+
 export async function installGame(): Promise<void> {
   if (currentTask || buildProcess) throw new Error("Установка уже выполняется");
   cancelRequested = false;
   try {
     const state = await loadState();
     let java = await detectJava(state.settings.javaPath);
-    if (!java?.valid && state.settings.autoInstallJava)
-      java = await installJava21();
+    if (!java?.valid) java = await installJava21();
     if (!java?.valid)
       throw new Error(
         `Для установки Royale Master нужна Java ${GAME.javaMajor}+`,
@@ -591,7 +614,7 @@ export async function installGame(): Promise<void> {
   } catch (error) {
     currentTask = null;
     buildProcess = null;
-    const message = error instanceof Error ? error.message : String(error);
+    const message = installationErrorMessage(error);
     if (
       cancelRequested ||
       error instanceof CancelledError ||
@@ -604,7 +627,7 @@ export async function installGame(): Promise<void> {
     } else {
       report("error", lastProgress.progress, "Ошибка установки", message);
     }
-    throw error;
+    throw new Error(message);
   }
 }
 
@@ -685,8 +708,7 @@ export async function launchGame(account: StoredAccount): Promise<void> {
   }
 
   let java = await detectJava(state.settings.javaPath);
-  if (!java?.valid && state.settings.autoInstallJava)
-    java = await installJava21();
+  if (!java?.valid) java = await installJava21();
   if (!java?.valid) {
     emitLaunch({
       state: "error",
