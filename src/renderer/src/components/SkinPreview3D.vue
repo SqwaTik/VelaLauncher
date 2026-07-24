@@ -211,6 +211,11 @@ onMounted(async () => {
   viewer.controls.enablePan = false;
   viewer.controls.enableRotate = true;
   viewer.controls.enableZoom = true;
+  viewer.controls.enableDamping = true;
+  viewer.controls.dampingFactor = 0.075;
+  // In the editor LMB belongs exclusively to painting. Rotation stays on
+  // RMB, so drawing cannot unexpectedly spin the model under the cursor.
+  if (props.editable) viewer.controls.mouseButtons.LEFT = MOUSE.PAN;
   viewer.controls.mouseButtons.RIGHT = MOUSE.ROTATE;
   const idle = new IdleAnimation();
   idle.speed = 0.7;

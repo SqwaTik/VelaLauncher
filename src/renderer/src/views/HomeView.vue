@@ -9,6 +9,8 @@ import { useAccountStore } from "@/stores/account";
 import { useSettingsStore } from "@/stores/settings";
 import { useModsStore } from "@/stores/mods";
 import { useResourcesStore } from "@/stores/resources";
+import { useShadersStore } from "@/stores/shaders";
+import { useInstancesStore } from "@/stores/instances";
 import generatedLogo from "@/assets/images/royale-logo-transparent.png";
 import { useLocale } from "@/composables/useLocale";
 
@@ -18,6 +20,8 @@ const account = useAccountStore();
 const settings = useSettingsStore();
 const mods = useModsStore();
 const resources = useResourcesStore();
+const shaders = useShadersStore();
+const instances = useInstancesStore();
 const { tr } = useLocale();
 const slide = ref(0);
 const galleryHovered = ref(false);
@@ -43,6 +47,22 @@ const gallery = computed(() => settings.screenshotUrls);
 const currentSlide = computed(() => gallery.value[slide.value] ?? null);
 const modPreview = computed(() => mods.installed.slice(0, 4));
 const resourcePreview = computed(() => resources.installed.slice(0, 4));
+const shaderPreview = computed(() =>
+  shaders.installed.slice(0, settings.content.shaderPacks > 8 ? 7 : 8),
+);
+const worldPreview = computed(() =>
+  settings.content.worldItems.slice(0, settings.content.worlds > 8 ? 7 : 8),
+);
+const instanceTitle = computed(() => {
+  const words = (instances.active?.name || "Royale Master")
+    .trim()
+    .split(/\s+/);
+  if (words.length === 1) return { base: words[0], accent: "" };
+  return {
+    base: words.slice(0, -1).join(" "),
+    accent: words.at(-1) ?? "",
+  };
+});
 const logoStyle = computed(() => ({
   transform: `rotateX(${logoPitch.value}deg) rotateY(${logoYaw.value}deg)`,
 }));
@@ -183,7 +203,11 @@ function russianCount(
 }
 onMounted(() => {
   void settings.refreshGameContent();
-  void Promise.allSettled([mods.loadInstalled(), resources.loadInstalled()]);
+  void Promise.allSettled([
+    mods.loadInstalled(),
+    resources.loadInstalled(),
+    shaders.loadInstalled(),
+  ]);
   void window.royale.discord.activity("В главном меню");
   carouselTimer = setInterval(() => {
     if (!galleryHovered.value) moveSlide(1);
@@ -241,7 +265,10 @@ onBeforeUnmount(() => {
     </RouterLink>
 
     <main class="instance">
-      <h1>Royale <span>Master</span></h1>
+      <h1>
+        {{ instanceTitle.base }}
+        <span v-if="instanceTitle.accent">{{ instanceTitle.accent }}</span>
+      </h1>
       <p class="instance-description">
         {{
           tr(
@@ -363,15 +390,37 @@ onBeforeUnmount(() => {
             ).replace(/^\d+\s/, "")
           }}</span>
         </div>
+        <div class="content-icons compact" aria-label="Миры">
+          <span
+            v-for="item in worldPreview"
+            :key="item.name"
+            :title="item.name"
+          >
+            <img v-if="item.iconDataUrl" :src="item.iconDataUrl" alt="" />
+            <Icon v-else name="globe" :size="12" />
+          </span>
+          <b v-if="settings.content.worlds > worldPreview.length">
+            +{{ settings.content.worlds - worldPreview.length }}
+          </b>
+        </div>
       </article>
 
-      <article class="dashboard-card shaders-card">
+      <article
+        class="dashboard-card shaders-card"
+        @click="router.push('/shaders?tab=installed')"
+      >
         <header>
           <span
             ><Icon name="sparkles" :size="18" />{{
               tr("Шейдеры", "Shaders", "Shaders")
             }}</span
           >
+          <button
+            title="Открыть установленные шейдеры"
+            @click.stop="router.push('/shaders?tab=installed')"
+          >
+            <Icon name="chevron" :size="15" />
+          </button>
         </header>
         <div class="card-count">
           <b>{{ settings.content.shaderPacks }}</b
@@ -383,6 +432,19 @@ onBeforeUnmount(() => {
               "наборов",
             ).replace(/^\d+\s/, "")
           }}</span>
+        </div>
+        <div class="content-icons compact" aria-label="Установленные шейдеры">
+          <span
+            v-for="item in shaderPreview"
+            :key="item.filename"
+            :title="item.title || item.filename"
+          >
+            <img v-if="item.iconUrl" :src="item.iconUrl" alt="" />
+            <Icon v-else name="sparkles" :size="12" />
+          </span>
+          <b v-if="settings.content.shaderPacks > shaderPreview.length">
+            +{{ settings.content.shaderPacks - shaderPreview.length }}
+          </b>
         </div>
       </article>
 
@@ -1401,7 +1463,7 @@ onBeforeUnmount(() => {
   background: rgba(14, 17, 16, 0.9);
 }
 .card-count {
-  margin-top: 16px;
+  margin-top: 11px;
   display: flex;
   align-items: baseline;
   gap: 6px;
@@ -1420,28 +1482,46 @@ onBeforeUnmount(() => {
   line-height: 1.4;
 }
 .content-icons {
+  width: 103px;
   display: flex;
-  align-items: center;
-  margin-top: 13px;
-  min-height: 30px;
+  flex-wrap: wrap;
+  gap: 0;
+  align-content: start;
+  margin-top: 11px;
+  min-height: 27px;
+  max-height: 108px;
 }
 .content-icons > span,
 .content-icons > b {
-  width: 29px;
-  height: 29px;
+  width: 27px;
+  height: 27px;
   display: grid;
   place-items: center;
   flex: none;
   overflow: hidden;
-  margin-left: -7px;
   border: 2px solid rgba(18, 22, 20, 0.98);
   border-radius: 50%;
   color: var(--green);
   background: var(--surface-3);
   box-shadow: 0 5px 12px #0005;
 }
-.content-icons > span:first-child {
-  margin-left: 0;
+.content-icons > :not(:nth-child(5n + 1)) {
+  margin-left: -8px;
+}
+.content-icons > :nth-child(5n + 1) {
+  z-index: 5;
+}
+.content-icons > :nth-child(5n + 2) {
+  z-index: 4;
+}
+.content-icons > :nth-child(5n + 3) {
+  z-index: 3;
+}
+.content-icons > :nth-child(5n + 4) {
+  z-index: 2;
+}
+.content-icons > :nth-child(5n + 5) {
+  z-index: 1;
 }
 .content-icons img {
   width: 100%;
@@ -1449,11 +1529,27 @@ onBeforeUnmount(() => {
   object-fit: cover;
 }
 .content-icons > b {
-  width: auto;
-  min-width: 29px;
-  padding: 0 7px;
+  min-width: 27px;
+  padding: 0 3px;
   color: var(--text-1);
   font: 700 8px var(--font-num);
+}
+.content-icons.compact {
+  width: 62px;
+  gap: 0;
+  margin-top: 7px;
+  max-height: 40px;
+}
+.content-icons.compact > span,
+.content-icons.compact > b {
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  border-width: 1px;
+  font-size: 7px;
+}
+.content-icons.compact > :not(:nth-child(4n + 1)) {
+  margin-left: -6px;
 }
 .screenshots-card > img,
 .screenshot-shade {

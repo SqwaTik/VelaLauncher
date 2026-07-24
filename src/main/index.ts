@@ -6,6 +6,7 @@ import { Readable } from "stream";
 import { registerIpc } from "./ipc";
 import { loadState } from "./services/store";
 import { destroyDiscord, initDiscord } from "./services/discord";
+import { IPC } from "../shared/constants";
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -21,6 +22,24 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 let mainWindow: BrowserWindow | null = null;
+let pendingModpackPath: string | null =
+  process.argv.find((value) => /\.(mrpack|zip)$/i.test(value)) ?? null;
+
+const singleInstance = app.requestSingleInstanceLock();
+if (!singleInstance) {
+  app.quit();
+} else {
+  app.on("second-instance", (_event, argv) => {
+    const path = argv.find((value) => /\.(mrpack|zip)$/i.test(value));
+    if (path) pendingModpackPath = path;
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+      if (path) mainWindow.webContents.send(IPC.modpackOpen, path);
+    }
+  });
+}
 if (process.platform === "win32") {
   app.setAppUserModelId("io.royale.launcher");
   app.setName("Royale Launcher");
@@ -113,6 +132,11 @@ function createWindow(): void {
   });
 
   mainWindow.on("ready-to-show", () => mainWindow?.show());
+  mainWindow.webContents.on("did-finish-load", () => {
+    if (!pendingModpackPath || !mainWindow) return;
+    mainWindow.webContents.send(IPC.modpackOpen, pendingModpackPath);
+    pendingModpackPath = null;
+  });
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url);
@@ -130,9 +154,10 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   protocol.handle("royale-media", async (request) => {
-    const requestedPath = decodeURIComponent(
-      new URL(request.url).pathname.slice(1),
-    );
+    const url = new URL(request.url);
+    const requestedPath =
+      url.searchParams.get("path") ||
+      decodeURIComponent(url.pathname.slice(1));
     const state = await loadState();
     const allowed = [
       state.settings.backgroundMediaPath,

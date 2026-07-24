@@ -1,6 +1,6 @@
 import { promises as fs } from "fs";
 import { extname, join } from "path";
-import type { GameContentSummary } from "../../shared/types";
+import type { GameContentItem, GameContentSummary } from "../../shared/types";
 import { gameDir } from "./store";
 
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
@@ -47,7 +47,7 @@ export async function listScreenshots(limit = 30): Promise<string[]> {
 
 export async function contentSummary(): Promise<GameContentSummary> {
   const root = await gameDir();
-  const [mods, resourcePacks, shaderPacks, worlds, screenshots] =
+  const [mods, resourcePacks, shaderPacks, worlds, screenshots, worldItems] =
     await Promise.all([
       countEntries(join(root, "mods"), (name) => name.endsWith(".jar")),
       countEntries(join(root, "resourcepacks")),
@@ -56,6 +56,39 @@ export async function contentSummary(): Promise<GameContentSummary> {
       countEntries(join(root, "screenshots"), (name) =>
         IMAGE_EXTENSIONS.has(extname(name).toLowerCase()),
       ),
+      listWorldItems(join(root, "saves")),
     ]);
-  return { mods, resourcePacks, shaderPacks, worlds, screenshots };
+  return {
+    mods,
+    resourcePacks,
+    shaderPacks,
+    worlds,
+    screenshots,
+    worldItems,
+  };
+}
+
+async function listWorldItems(root: string): Promise<GameContentItem[]> {
+  try {
+    const entries = (await fs.readdir(root, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+      .slice(0, 12);
+    return Promise.all(
+      entries.map(async (entry) => {
+        const iconPath = join(root, entry.name, "icon.png");
+        let iconDataUrl: string | null = null;
+        try {
+          const bytes = await fs.readFile(iconPath);
+          if (bytes.length <= 2 * 1024 * 1024) {
+            iconDataUrl = `data:image/png;base64,${bytes.toString("base64")}`;
+          }
+        } catch {
+          /* A world icon is optional. */
+        }
+        return { name: entry.name, iconDataUrl };
+      }),
+    );
+  } catch {
+    return [];
+  }
 }

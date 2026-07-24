@@ -12,8 +12,9 @@ const settings = computed(() => store.settings);
 const active = ref("appearance");
 const languageOpen = ref(false);
 const nativeLibrariesOpen = ref(false);
+const javaPathOpen = ref(false);
 const javaError = ref("");
-const launcherVersion = ref("0.1.2");
+const launcherVersion = ref("0.1.3");
 const languageLabel = computed(() =>
   settings.value?.language === "en"
     ? "English"
@@ -149,9 +150,17 @@ function scrollTo(id: string): void {
     scrollRoot.scrollTo({ top: destination, behavior: "smooth" });
   }
   unlockTimer = setTimeout(() => {
-    manualTarget = null;
-    syncNavigation();
-  }, 420);
+    releaseManualNavigation();
+  }, 900);
+}
+function releaseManualNavigation(): void {
+  if (!manualTarget) return;
+  manualTarget = null;
+  if (unlockTimer) {
+    clearTimeout(unlockTimer);
+    unlockTimer = null;
+  }
+  syncNavigation();
 }
 async function replayOnboarding(): Promise<void> {
   if (!settings.value) return;
@@ -180,6 +189,19 @@ function detectJava(): void {
   save();
   void store.detectJava();
 }
+async function chooseJavaPath(): Promise<void> {
+  const path = await window.royale.app.pickJava();
+  if (!path || !settings.value) return;
+  settings.value.javaPath = path;
+  javaPathOpen.value = false;
+  detectJava();
+}
+function useAutomaticJava(): void {
+  if (!settings.value) return;
+  settings.value.javaPath = null;
+  javaPathOpen.value = false;
+  detectJava();
+}
 async function installJava(): Promise<void> {
   javaError.value = "";
   try {
@@ -203,6 +225,7 @@ function chooseNativeLibraries(value: "never" | "old-only" | "always"): void {
 }
 function closeNativeLibraries(): void {
   nativeLibrariesOpen.value = false;
+  javaPathOpen.value = false;
 }
 
 onMounted(async () => {
@@ -210,6 +233,9 @@ onMounted(async () => {
   if (!store.java) void store.detectJava();
   scrollRoot = document.querySelector<HTMLElement>(".content");
   scrollRoot?.addEventListener("scroll", syncNavigation, {
+    passive: true,
+  });
+  scrollRoot?.addEventListener("scrollend", releaseManualNavigation, {
     passive: true,
   });
   syncNavigation();
@@ -223,6 +249,7 @@ onBeforeUnmount(() => {
   if (unlockTimer) clearTimeout(unlockTimer);
   cancelAnimationFrame(scrollFrame);
   scrollRoot?.removeEventListener("scroll", syncNavigation);
+  scrollRoot?.removeEventListener("scrollend", releaseManualNavigation);
   document.removeEventListener("click", closeNativeLibraries);
 });
 </script>
@@ -655,22 +682,68 @@ onBeforeUnmount(() => {
         <p v-if="javaError" class="inline-error">
           <Icon name="alert" :size="14" />{{ javaError }}
         </p>
-        <div class="setting-card column">
-          <label
-            ><b>{{ tr("Путь к Java", "Java path", "Ruta de Java") }}</b
-            ><small>{{
-              tr(
-                "Оставьте пустым для автоматического поиска",
-                "Leave empty for automatic detection",
-                "Déjelo vacío para la detección automática",
-              )
-            }}</small></label
-          ><input
-            v-model="settings.javaPath"
-            class="control wide"
-            placeholder="C:\Program Files\Java\jdk-21\bin\java.exe"
-            @change="detectJava"
-          />
+        <div
+          class="setting-card compact"
+          :class="{ 'dropdown-active': javaPathOpen }"
+        >
+          <div class="setting-icon"><Icon name="rocket" :size="18" /></div>
+          <div class="setting-copy">
+            <b>{{ tr("Путь к Java", "Java path", "Ruta de Java") }}</b
+            ><small
+              >Автопоиск выполняется перед каждым запуском; при желании можно
+              указать свой java.exe.</small
+            >
+          </div>
+          <div
+            class="native-dropdown java-path-dropdown"
+            :class="{ open: javaPathOpen }"
+            @click.stop
+          >
+            <button
+              class="native-trigger java-path-trigger"
+              @click="javaPathOpen = !javaPathOpen"
+            >
+              <span
+                ><b>{{
+                  settings.javaPath ? "Свой java.exe" : "Автоматически"
+                }}</b
+                ><small>{{
+                  settings.javaPath || `Поиск Java ${GAME.javaMajor}+`
+                }}</small></span
+              >
+              <Icon name="chevron" :size="15" />
+            </button>
+            <Transition name="native-menu">
+              <div v-if="javaPathOpen" class="native-menu">
+                <button
+                  :class="{ active: !settings.javaPath }"
+                  @click="useAutomaticJava"
+                >
+                  <span
+                    ><b>Автоматически</b
+                    ><small>Найти и проверить Java перед запуском</small></span
+                  >
+                  <Icon
+                    v-if="!settings.javaPath"
+                    name="check"
+                    :size="15"
+                  />
+                </button>
+                <button
+                  :class="{ active: Boolean(settings.javaPath) }"
+                  @click="chooseJavaPath"
+                >
+                  <span
+                    ><b>Выбрать java.exe</b
+                    ><small>{{
+                      settings.javaPath || "Указать собственную Java"
+                    }}</small></span
+                  >
+                  <Icon name="folder" :size="15" />
+                </button>
+              </div>
+            </Transition>
+          </div>
         </div>
         <div class="setting-card advanced-grid">
           <label
@@ -1223,6 +1296,35 @@ label small {
   z-index: 2;
   width: 190px;
   flex: none;
+}
+.java-path-dropdown {
+  width: min(330px, 38vw);
+}
+.java-path-trigger {
+  min-height: 48px;
+}
+.java-path-trigger > span {
+  min-width: 0;
+  flex: 1;
+  text-align: left;
+}
+.java-path-trigger b,
+.java-path-trigger small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.java-path-trigger b {
+  font-size: 10.5px;
+}
+.java-path-trigger small {
+  margin-top: 3px;
+  color: var(--text-3);
+  font-size: 8.5px;
+}
+.java-path-dropdown .native-menu {
+  width: 100%;
 }
 .native-trigger {
   width: 100%;

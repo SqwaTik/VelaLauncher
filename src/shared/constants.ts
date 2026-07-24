@@ -57,6 +57,7 @@ export const IPC = {
   openExternal: "app:open-external",
   pickFolder: "app:pick-folder",
   pickImage: "app:pick-image",
+  pickJava: "app:pick-java",
   pickMedia: "app:pick-media",
   pickGallery: "app:pick-gallery",
   readImage: "app:read-image",
@@ -68,6 +69,9 @@ export const IPC = {
   stateGet: "state:get",
   settingsSave: "settings:save",
   accountsSave: "accounts:save",
+  instancesSave: "instances:save",
+  instanceReveal: "instance:reveal",
+  instanceDuplicate: "instance:duplicate",
   friendsSave: "friends:save",
   friendResolve: "friends:resolve",
 
@@ -128,6 +132,21 @@ export const IPC = {
   resourceRemove: "resource:remove",
   resourceReveal: "resource:reveal",
   resourceProgress: "resource:progress",
+
+  // modrinth / shader packs
+  shaderSearch: "shader:search",
+  shaderProject: "shader:project",
+  shaderInstallProject: "shader:install-project",
+  shaderInstalledList: "shader:installed-list",
+  shaderRemove: "shader:remove",
+  shaderReveal: "shader:reveal",
+  shaderProgress: "shader:progress",
+
+  // modpack import / export and OS file-open integration
+  modpackImport: "modpack:import",
+  modpackExport: "modpack:export",
+  modpackProgress: "modpack:progress",
+  modpackOpen: "modpack:open",
 } as const;
 
 export const MODRINTH_API = "https://api.modrinth.com/v2";

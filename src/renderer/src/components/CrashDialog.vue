@@ -25,11 +25,6 @@ async function copyReport(): Promise<void> {
   copied.value = true;
   setTimeout(() => (copied.value = false), 1400);
 }
-async function checkAndRepair(): Promise<void> {
-  launcher.dismissCrash();
-  await launcher.checkUpdate();
-  await launcher.install();
-}
 </script>
 
 <template>
@@ -73,16 +68,6 @@ async function checkAndRepair(): Promise<void> {
           <pre v-if="detailsOpen">{{
             launcher.crash.crashReport || "Отчёт Minecraft не создан."
           }}</pre>
-          <div class="recovery-note">
-            <Icon name="shield" :size="18" />
-            <p>
-              <b>Безопасное восстановление</b
-              ><small
-                >Лаунчер проверит библиотеки, игровые ресурсы, моды и файлы
-                Royale Master, а повреждённые загрузит заново.</small
-              >
-            </p>
-          </div>
           <footer>
             <button class="btn btn-ghost" @click="copyReport">
               <Icon :name="copied ? 'check' : 'copy'" :size="15" />{{
@@ -90,9 +75,7 @@ async function checkAndRepair(): Promise<void> {
               }}</button
             ><button class="btn" @click="launcher.dismissCrash()">
               Закрыть</button
-            ><button class="btn btn-primary" @click="checkAndRepair">
-              <Icon name="refresh" :size="16" />Проверить и восстановить
-            </button>
+            >
           </footer>
         </section>
       </div>
@@ -204,32 +187,6 @@ pre {
     monospace;
   user-select: text;
   white-space: pre-wrap;
-}
-.recovery-note {
-  margin-top: 14px;
-  padding: 12px;
-  display: flex;
-  gap: 10px;
-  border-radius: 11px;
-  color: var(--green);
-  background: var(--green-soft);
-}
-.recovery-note p {
-  min-width: 0;
-}
-.recovery-note b,
-.recovery-note small {
-  display: block;
-}
-.recovery-note b {
-  color: var(--text-0);
-  font-size: 11px;
-}
-.recovery-note small {
-  margin-top: 4px;
-  color: var(--text-2);
-  font-size: 9.5px;
-  line-height: 1.4;
 }
 .crash-card footer {
   margin-top: 18px;

@@ -10,11 +10,13 @@ import { useAccountStore } from "./stores/account";
 import { useSettingsStore } from "./stores/settings";
 import { useLauncherStore } from "./stores/launcher";
 import { useModsStore } from "./stores/mods";
+import { useInstancesStore } from "./stores/instances";
 
 const account = useAccountStore();
 const settings = useSettingsStore();
 const launcher = useLauncherStore();
 const mods = useModsStore();
+const instances = useInstancesStore();
 const router = useRouter();
 
 const ready = ref(false);
@@ -24,6 +26,15 @@ const showOnboarding = computed(
 const navigating = ref(false);
 let navigationTimer: ReturnType<typeof setTimeout> | null = null;
 let navigationDoneTimer: ReturnType<typeof setTimeout> | null = null;
+let removeOpenModpackListener: (() => void) | null = null;
+
+async function refreshActiveInstance(): Promise<void> {
+  await launcher.hydrate();
+  await Promise.allSettled([
+    mods.loadInstalled(),
+    settings.refreshGameContent(),
+  ]);
+}
 
 const removeBeforeGuard = router.beforeEach((to, from) => {
   if (to.fullPath === from.fullPath) return;
@@ -44,6 +55,8 @@ const removeAfterGuard = router.afterEach((to) => {
       ? "Просматривает моды"
       : to.name === "resources"
         ? "Выбирает ресурспаки"
+        : to.name === "shaders"
+          ? "Выбирает шейдеры"
         : to.name === "account"
           ? "Настраивает профиль"
           : to.name === "settings"
@@ -55,11 +68,20 @@ const removeAfterGuard = router.afterEach((to) => {
 // The BootScreen stays up until the essential state has hydrated.
 onMounted(async () => {
   try {
-    await Promise.all([account.hydrate(), settings.hydrate()]);
+    await Promise.all([
+      account.hydrate(),
+      settings.hydrate(),
+      instances.hydrate(),
+    ]);
     await launcher.hydrate();
     mods.subscribe();
+    removeOpenModpackListener = window.royale.modpacks.onOpen((path) => {
+      void router.push({ path: "/mods", query: { tab: "installed" } });
+      void mods.importPack(path);
+    });
     void settings.detectJava();
     void settings.checkLauncherUpdate();
+    window.addEventListener("royale:instance-changed", refreshActiveInstance);
   } finally {
     ready.value = true;
   }
@@ -69,6 +91,8 @@ onBeforeUnmount(() => {
   removeAfterGuard();
   if (navigationTimer) clearTimeout(navigationTimer);
   if (navigationDoneTimer) clearTimeout(navigationDoneTimer);
+  removeOpenModpackListener?.();
+  window.removeEventListener("royale:instance-changed", refreshActiveInstance);
 });
 </script>
 

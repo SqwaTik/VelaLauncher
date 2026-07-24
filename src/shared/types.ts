@@ -37,6 +37,29 @@ export interface Friend {
   addedAt: number;
 }
 
+export type InstanceSource = "default" | "created" | "imported";
+
+export interface InstanceSharedFolders {
+  worlds: boolean;
+  resourcePacks: boolean;
+  shaderPacks: boolean;
+}
+
+/** A separate Minecraft workspace shown as a round item in the launcher rail. */
+export interface GameInstance {
+  id: string;
+  name: string;
+  /** Empty only for the original Royale Master workspace at storagePath root. */
+  directory: string;
+  source: InstanceSource;
+  iconDataUrl?: string | null;
+  /** Optional per-instance Java executable. Null means automatic detection. */
+  javaPath?: string | null;
+  pinned: boolean;
+  createdAt: number;
+  sharedFolders: InstanceSharedFolders;
+}
+
 /** Canonical Minecraft profile returned by Mojang's public profile API. */
 export interface MinecraftProfile {
   username: string;
@@ -131,6 +154,8 @@ export interface PersistShape {
   settings: AppSettings;
   accounts: StoredAccount[];
   activeAccountId: string | null;
+  instances: GameInstance[];
+  activeInstanceId: string;
   friends: Friend[];
   stats: LauncherStats;
 }
@@ -199,6 +224,12 @@ export interface GameContentSummary {
   shaderPacks: number;
   worlds: number;
   screenshots: number;
+  worldItems: GameContentItem[];
+}
+
+export interface GameContentItem {
+  name: string;
+  iconDataUrl?: string | null;
 }
 
 export interface ElyLoginInput {
@@ -265,6 +296,7 @@ export interface ModVersionFile {
   url: string;
   size: number;
   sha1: string;
+  sha512?: string;
   dependencies: ModDependency[];
 }
 
@@ -300,8 +332,27 @@ export interface InstalledMod {
 
 export interface InstalledResourcePack extends InstalledMod {}
 
+export interface InstalledShaderPack extends InstalledMod {}
+
 export interface ModInstallResult {
   root: InstalledMod;
   installed: InstalledMod[];
   dependencyTitles: string[];
+}
+
+export interface ModpackProgress {
+  phase: "reading" | "downloading" | "copying" | "packing" | "done";
+  progress: number;
+  message: string;
+  detail?: string;
+}
+
+export interface ModpackResult {
+  path: string;
+  name: string;
+  instanceId?: string;
+  mods: number;
+  resourcePacks: number;
+  shaderPacks: number;
+  files: number;
 }

@@ -219,8 +219,19 @@ async function remoteClientInfo(): Promise<RemoteClientInfo> {
           asset.name.toLowerCase().endsWith(".jar"),
         )
       : undefined;
-  const state = await loadState();
-  const installedSha = state.stats.installedCommitSha ?? null;
+  const activeRoot = await gameDir();
+  let installedSha: string | null = null;
+  try {
+    installedSha =
+      (
+        JSON.parse(
+          await fs.readFile(join(activeRoot, ".royale-client.json"), "utf8"),
+        ) as { commitSha?: string }
+      ).commitSha ?? null;
+  } catch {
+    installedSha = null;
+  }
+  const installed = await isInstalled();
   const checkedAt = Date.now();
   await updateStats({ lastUpdateCheck: checkedAt });
   return {
@@ -228,7 +239,7 @@ async function remoteClientInfo(): Promise<RemoteClientInfo> {
       checkedAt,
       available: installedSha
         ? installedSha !== commit.sha
-        : state.stats.installed,
+        : installed,
       installed: Boolean(installedSha),
       localCommitSha: installedSha,
       remoteCommitSha: commit.sha,
@@ -481,6 +492,7 @@ async function installRoyaleClient(
     throw new Error("GitHub не вернул SHA последнего коммита Royale Master");
   const state = await loadState();
   const cacheRoot = join(state.settings.storagePath, ".launcher-cache");
+  const instanceRoot = dirname(modsPath);
   await fs.mkdir(cacheRoot, { recursive: true });
   const staged = join(
     cacheRoot,
@@ -528,7 +540,7 @@ async function installRoyaleClient(
       (
         JSON.parse(
           await fs.readFile(
-            join(state.settings.storagePath, ".royale-client.json"),
+            join(instanceRoot, ".royale-client.json"),
             "utf8",
           ),
         ) as { jarName?: string }
@@ -542,7 +554,7 @@ async function installRoyaleClient(
   if (oldJar && oldJar !== jarName)
     await fs.rm(join(modsPath, oldJar), { force: true });
   await fs.writeFile(
-    join(state.settings.storagePath, ".royale-client.json"),
+    join(instanceRoot, ".royale-client.json"),
     JSON.stringify(
       {
         jarName,
@@ -1016,7 +1028,10 @@ export async function launchGame(account: StoredAccount): Promise<void> {
   try {
     const state = await loadState();
     if (cancelled()) return;
-    const dir = state.settings.storagePath;
+    const dir = await gameDir();
+    const instance = state.instances.find(
+      (item) => item.id === state.activeInstanceId,
+    );
     const folder = MinecraftFolder.from(dir);
     const id = fabricVersionId();
     if (!existsSync(folder.getVersionJson(id))) {
@@ -1025,7 +1040,7 @@ export async function launchGame(account: StoredAccount): Promise<void> {
       return;
     }
 
-    let java = await detectJava(state.settings.javaPath);
+    let java = await detectJava(instance?.javaPath ?? state.settings.javaPath);
     if (!java?.valid) java = await installJava21();
     if (cancelled()) return;
     if (!java?.valid) {
@@ -1064,9 +1079,10 @@ export async function launchGame(account: StoredAccount): Promise<void> {
       state.settings.quickLaunch,
     );
     if (cancelled()) return;
-    await repairInstalledMods((message) =>
-      emitLaunch({ state: "launching", message }),
-    );
+    // Lightweight damage (partial/corrupt Modrinth archives) is repaired
+    // silently before Fabric sees it. The launch button keeps one calm status
+    // instead of exposing technical recovery work to the player.
+    await repairInstalledMods();
     await ensureRoyaleClientHealthy(dir, java.path);
     if (cancelled()) return;
     const automaticMax = Math.min(

@@ -23,6 +23,12 @@ export const router = createRouter({
       meta: { title: "Ресурспаки" },
     },
     {
+      path: "/shaders",
+      name: "shaders",
+      component: () => import("@/views/ModsView.vue"),
+      meta: { title: "Шейдеры" },
+    },
+    {
       path: "/account",
       name: "account",
       component: () => import("@/views/AccountView.vue"),

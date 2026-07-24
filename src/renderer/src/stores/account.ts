@@ -14,6 +14,7 @@ import type {
 
 export type { AccountType, SkinModel };
 export type Account = StoredAccount;
+export const MAX_ACCOUNTS = 6;
 
 /** Offline UUID: FNV-hash-based, stable per-name (vanilla-style offline identity). */
 function offlineUuid(name: string): string {
@@ -58,6 +59,7 @@ export const useAccountStore = defineStore("account", () => {
   const accounts = ref<StoredAccount[]>([]);
   const activeId = ref<string | null>(null);
   const friends = ref<Friend[]>([]);
+  const accountLimitError = ref("");
 
   // ---- Microsoft browser OAuth UI state ----
   const msState = ref<MsLoginState>("idle");
@@ -71,6 +73,18 @@ export const useAccountStore = defineStore("account", () => {
   const active = computed(
     () => accounts.value.find((a) => a.id === activeId.value) ?? null,
   );
+  const canAddAccount = computed(() => accounts.value.length < MAX_ACCOUNTS);
+
+  function requireAccountSlot(existingId?: string): void {
+    accountLimitError.value = "";
+    if (
+      !existingId &&
+      accounts.value.length >= MAX_ACCOUNTS
+    ) {
+      accountLimitError.value = "Можно добавить не больше 6 аккаунтов.";
+      throw new Error(accountLimitError.value);
+    }
+  }
   const avatar = computed(() => (active.value ? avatarFor(active.value) : ""));
   const skinSource = computed(() => {
     if (!active.value) return null;
@@ -144,6 +158,11 @@ export const useAccountStore = defineStore("account", () => {
   function addOffline(username: string): void {
     const name = username.trim();
     if (!name) return;
+    try {
+      requireAccountSlot();
+    } catch {
+      return;
+    }
     const id = `offline-${Date.now()}`;
     accounts.value.push({
       id,
@@ -162,6 +181,7 @@ export const useAccountStore = defineStore("account", () => {
     try {
       const result = await window.royale.auth.elyLogin(input);
       const index = accounts.value.findIndex((item) => item.id === result.id);
+      requireAccountSlot(index >= 0 ? result.id : undefined);
       if (index >= 0) accounts.value[index] = result;
       else accounts.value.push(result);
       activeId.value = result.id;
@@ -181,6 +201,7 @@ export const useAccountStore = defineStore("account", () => {
     try {
       const result = await window.royale.auth.littleSkinLogin(input);
       const index = accounts.value.findIndex((item) => item.id === result.id);
+      requireAccountSlot(index >= 0 ? result.id : undefined);
       if (index >= 0) accounts.value[index] = result;
       else accounts.value.push(result);
       activeId.value = result.id;
@@ -210,6 +231,13 @@ export const useAccountStore = defineStore("account", () => {
         const acc = s.account;
         // replace existing MS account with same id, else push
         const idx = accounts.value.findIndex((a) => a.id === acc.id);
+        try {
+          requireAccountSlot(idx >= 0 ? acc.id : undefined);
+        } catch {
+          msState.value = "error";
+          msError.value = accountLimitError.value;
+          return;
+        }
         if (idx >= 0) accounts.value[idx] = acc;
         else accounts.value.push(acc);
         activeId.value = acc.id;
@@ -549,6 +577,8 @@ export const useAccountStore = defineStore("account", () => {
 
   return {
     accounts,
+    canAddAccount,
+    accountLimitError,
     activeId,
     active,
     avatar,

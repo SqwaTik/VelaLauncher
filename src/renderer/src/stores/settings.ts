@@ -11,7 +11,7 @@ import type {
 } from "@shared/types";
 
 function mediaUrl(path: string): string {
-  return `royale-media://local/${encodeURIComponent(path)}`;
+  return `royale-media://local/media?path=${encodeURIComponent(path)}`;
 }
 
 function mediaKind(path: string | null | undefined): "image" | "video" {
@@ -39,6 +39,7 @@ export const useSettingsStore = defineStore("settings", () => {
     shaderPacks: 0,
     worlds: 0,
     screenshots: 0,
+    worldItems: [],
   });
 
   const backgroundUrl = computed(() => {

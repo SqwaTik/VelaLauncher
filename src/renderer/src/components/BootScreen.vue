@@ -24,7 +24,7 @@ onMounted(() => {
   textTimer = setInterval(() => {
     step = Math.min(step + 1, steps.length - 1);
     statusText.value = steps[step];
-  }, 430);
+  }, 620);
 });
 
 onBeforeUnmount(() => {
@@ -36,14 +36,14 @@ watch(
   () => props.ready,
   (ready) => {
     if (!ready) return;
-    const remaining = Math.max(0, 900 - (Date.now() - startedAt));
+    const remaining = Math.max(0, 2600 - (Date.now() - startedAt));
     setTimeout(() => {
       if (progressTimer) clearInterval(progressTimer);
       if (textTimer) clearInterval(textTimer);
       pct.value = 100;
       statusText.value = "Готово";
-      setTimeout(() => (leaving.value = true), 120);
-      setTimeout(() => (gone.value = true), 500);
+      setTimeout(() => (leaving.value = true), 180);
+      setTimeout(() => (gone.value = true), 650);
     }, remaining);
   },
 );
@@ -53,10 +53,14 @@ watch(
   <Transition name="boot">
     <div v-if="!gone" class="boot" :class="{ leaving }">
       <div class="boot-inner">
-        <div class="gyro" aria-hidden="true">
-          <i class="orbit orbit-a" /><i class="orbit orbit-b" /><i
-            class="orbit orbit-c"
-          /><span><b /></span>
+        <div class="kinetic-loader" aria-hidden="true">
+          <i class="ring ring-outer" />
+          <i class="ring ring-middle" />
+          <i class="ring ring-inner" />
+          <span class="loader-core"><b /></span>
+          <em class="node node-a" />
+          <em class="node node-b" />
+          <em class="node node-c" />
         </div>
         <p class="status">{{ statusText }}</p>
         <div class="rail">
@@ -78,20 +82,20 @@ watch(
   overflow: hidden;
   background:
     radial-gradient(
-      circle at 50% 44%,
-      rgba(62, 158, 91, 0.11),
-      transparent 31%
+      circle at 50% 46%,
+      rgba(75, 155, 100, 0.1),
+      transparent 28%
     ),
-    #080c09;
+    linear-gradient(145deg, #090d0b, #060907);
 }
 .boot::before {
   content: "";
   position: absolute;
-  width: 520px;
-  height: 520px;
-  border: 1px solid rgba(86, 197, 104, 0.035);
+  width: 460px;
+  height: 460px;
+  border: 1px solid rgba(126, 180, 140, 0.035);
   transform: rotate(45deg);
-  animation: ambient 9s linear infinite;
+  animation: ambient 13s linear infinite;
 }
 .boot-inner {
   position: relative;
@@ -100,60 +104,80 @@ watch(
   align-items: center;
   flex-direction: column;
 }
-.gyro {
+.kinetic-loader {
   position: relative;
-  width: 118px;
-  height: 118px;
+  width: 124px;
+  height: 124px;
   display: grid;
   place-items: center;
-  perspective: 380px;
+  filter: drop-shadow(0 12px 28px rgba(0, 0, 0, 0.44));
 }
-.orbit {
+.ring {
   position: absolute;
-  inset: 13px;
-  border: 1px solid rgba(101, 214, 127, 0.55);
+  border: 1px solid transparent;
   border-radius: 50%;
-  box-shadow:
-    inset 0 0 18px rgba(83, 195, 106, 0.08),
-    0 0 16px rgba(83, 195, 106, 0.08);
+  will-change: transform;
 }
-.orbit::after {
-  content: "";
-  position: absolute;
-  top: -3px;
-  left: 50%;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #77dc8c;
-  box-shadow: 0 0 13px #56c568;
+.ring-outer {
+  inset: 5px;
+  border-top-color: rgba(113, 206, 132, 0.72);
+  border-right-color: rgba(113, 206, 132, 0.15);
+  border-bottom-color: rgba(113, 206, 132, 0.42);
+  animation: spin-loader 2.8s cubic-bezier(0.54, 0.05, 0.3, 0.94) infinite;
 }
-.orbit-a {
-  animation: orbit-a 1.8s linear infinite;
+.ring-middle {
+  inset: 18px;
+  border-top-color: rgba(224, 235, 228, 0.16);
+  border-left-color: rgba(224, 235, 228, 0.52);
+  animation: spin-loader-reverse 2s cubic-bezier(0.54, 0.05, 0.3, 0.94) infinite;
 }
-.orbit-b {
-  animation: orbit-b 2.2s linear infinite reverse;
+.ring-inner {
+  inset: 32px;
+  border-right-color: rgba(91, 189, 114, 0.72);
+  border-bottom-color: rgba(91, 189, 114, 0.18);
+  animation: spin-loader 1.35s linear infinite;
 }
-.orbit-c {
-  inset: 25px;
-  animation: orbit-c 1.45s linear infinite;
-}
-.gyro > span {
-  width: 34px;
-  height: 34px;
+.loader-core {
+  position: relative;
+  width: 28px;
+  height: 28px;
   display: grid;
   place-items: center;
-  border: 1px solid rgba(118, 229, 143, 0.65);
+  border: 1px solid rgba(142, 214, 157, 0.58);
+  border-radius: 7px;
   transform: rotate(45deg);
-  background: rgba(83, 195, 106, 0.08);
-  box-shadow: 0 0 30px rgba(83, 195, 106, 0.18);
-  animation: core 1.6s ease-in-out infinite;
+  background: rgba(76, 151, 92, 0.1);
+  box-shadow:
+    inset 0 0 13px rgba(96, 201, 119, 0.08),
+    0 0 26px rgba(76, 173, 99, 0.13);
+  animation: core-pulse 1.7s ease-in-out infinite;
 }
-.gyro > span b {
-  width: 10px;
-  height: 10px;
-  background: #73d889;
-  box-shadow: 0 0 18px #56c568;
+.loader-core b {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: #72cf87;
+  box-shadow: 0 0 13px rgba(103, 207, 126, 0.78);
+}
+.node {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border: 1px solid rgba(144, 218, 160, 0.72);
+  border-radius: 50%;
+  background: #0a110c;
+}
+.node-a {
+  top: 3px;
+  left: 59px;
+}
+.node-b {
+  right: 16px;
+  bottom: 24px;
+}
+.node-c {
+  left: 24px;
+  bottom: 15px;
 }
 .status {
   min-height: 20px;
@@ -183,24 +207,20 @@ watch(
   color: var(--text-3);
   font: 8px var(--font-num);
 }
-@keyframes orbit-a {
+@keyframes spin-loader {
   to {
-    transform: rotate(360deg) rotateX(58deg);
+    transform: rotate(360deg);
   }
 }
-@keyframes orbit-b {
+@keyframes spin-loader-reverse {
   to {
-    transform: rotate(360deg) rotateY(63deg);
+    transform: rotate(-360deg);
   }
 }
-@keyframes orbit-c {
-  to {
-    transform: rotate(-360deg) rotateX(72deg) rotateY(18deg);
-  }
-}
-@keyframes core {
+@keyframes core-pulse {
   50% {
-    transform: rotate(135deg) scale(0.82);
+    transform: rotate(135deg) scale(0.86);
+    opacity: 0.72;
   }
 }
 @keyframes ambient {

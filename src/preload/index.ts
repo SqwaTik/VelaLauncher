@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import { IPC } from "../shared/constants";
 import type {
   AppSettings,
+  GameInstance,
   StoredAccount,
   PersistShape,
   JavaInfo,
@@ -23,8 +24,11 @@ import type {
   ElyLoginInput,
   LittleSkinLoginInput,
   InstalledResourcePack,
+  InstalledShaderPack,
   LauncherUpdateInfo,
   LauncherUpdateProgress,
+  ModpackProgress,
+  ModpackResult,
 } from "../shared/types";
 
 /** Subscribe helper: returns an unsubscribe fn so callers can clean up. */
@@ -49,6 +53,7 @@ const api = {
     pickFolder: (): Promise<string | null> =>
       ipcRenderer.invoke(IPC.pickFolder),
     pickImage: (): Promise<string | null> => ipcRenderer.invoke(IPC.pickImage),
+    pickJava: (): Promise<string | null> => ipcRenderer.invoke(IPC.pickJava),
     pickMedia: (): Promise<string | null> => ipcRenderer.invoke(IPC.pickMedia),
     pickGallery: (): Promise<string[]> => ipcRenderer.invoke(IPC.pickGallery),
     readImage: (path: string): Promise<string> =>
@@ -76,8 +81,19 @@ const api = {
       activeId: string | null,
     ): Promise<PersistShape> =>
       ipcRenderer.invoke(IPC.accountsSave, accounts, activeId),
+    saveInstances: (
+      instances: GameInstance[],
+      activeId: string,
+    ): Promise<PersistShape> =>
+      ipcRenderer.invoke(IPC.instancesSave, instances, activeId),
     saveFriends: (friends: Friend[]): Promise<PersistShape> =>
       ipcRenderer.invoke(IPC.friendsSave, friends),
+  },
+  instances: {
+    reveal: (id: string): Promise<void> =>
+      ipcRenderer.invoke(IPC.instanceReveal, id),
+    duplicate: (id: string): Promise<PersistShape> =>
+      ipcRenderer.invoke(IPC.instanceDuplicate, id),
   },
   friends: {
     resolve: (username: string): Promise<MinecraftProfile> =>
@@ -217,6 +233,43 @@ const api = {
         error?: string;
       }) => void,
     ): (() => void) => on(IPC.resourceProgress, cb),
+  },
+  shaders: {
+    search: (
+      query: string,
+      category: string,
+      sort: string,
+      offset: number,
+    ): Promise<ModSearchResult> =>
+      ipcRenderer.invoke(IPC.shaderSearch, query, category, sort, offset),
+    project: (projectId: string): Promise<ModProject> =>
+      ipcRenderer.invoke(IPC.shaderProject, projectId),
+    installProject: (projectId: string): Promise<InstalledShaderPack> =>
+      ipcRenderer.invoke(IPC.shaderInstallProject, projectId),
+    installedList: (): Promise<InstalledShaderPack[]> =>
+      ipcRenderer.invoke(IPC.shaderInstalledList),
+    remove: (filename: string): Promise<void> =>
+      ipcRenderer.invoke(IPC.shaderRemove, filename),
+    reveal: (filename: string): Promise<void> =>
+      ipcRenderer.invoke(IPC.shaderReveal, filename),
+    onProgress: (
+      cb: (p: {
+        filename: string;
+        progress: number;
+        done: boolean;
+        error?: string;
+      }) => void,
+    ): (() => void) => on(IPC.shaderProgress, cb),
+  },
+  modpacks: {
+    import: (path?: string): Promise<ModpackResult | null> =>
+      ipcRenderer.invoke(IPC.modpackImport, path),
+    export: (): Promise<ModpackResult | null> =>
+      ipcRenderer.invoke(IPC.modpackExport),
+    onProgress: (cb: (progress: ModpackProgress) => void): (() => void) =>
+      on(IPC.modpackProgress, cb),
+    onOpen: (cb: (path: string) => void): (() => void) =>
+      on(IPC.modpackOpen, cb),
   },
 };
 

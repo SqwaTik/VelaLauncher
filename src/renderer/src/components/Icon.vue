@@ -83,6 +83,11 @@ import {
   ZoomOut,
   Puzzle,
   Octagon,
+  ArrowDownToLine,
+  Share2,
+  Pin,
+  PinOff,
+  MoreVertical,
 } from "lucide-vue-next";
 import type { FunctionalComponent } from "vue";
 
@@ -172,6 +177,11 @@ const map: Record<string, IconComp> = {
   select: SquareMousePointer,
   zoomIn: ZoomIn,
   zoomOut: ZoomOut,
+  import: ArrowDownToLine,
+  share: Share2,
+  pin: Pin,
+  pinOff: PinOff,
+  more: MoreVertical,
 };
 
 const comp = computed<IconComp>(
