@@ -263,6 +263,16 @@ onBeforeUnmount(() => {
             <i v-if="instance.pinned" class="pin-mark"
               ><Icon name="pin" :size="9"
             /></i>
+            <span
+              class="instance-avatar-edit"
+              role="button"
+              tabindex="0"
+              title="Изменить аватар экземпляра"
+              @click.stop="instances.pickIcon(instance.id)"
+              @keydown.enter.stop="instances.pickIcon(instance.id)"
+            >
+              <Icon name="pencil" :size="9" />
+            </span>
           </span>
           <span class="instance-copy"
             ><b>{{ instance.name }}</b
@@ -817,7 +827,7 @@ onBeforeUnmount(() => {
   flex: none;
   display: grid;
   place-items: center;
-  overflow: hidden;
+  overflow: visible;
   border-radius: 50%;
   color: var(--text-2);
   background:
@@ -833,6 +843,7 @@ onBeforeUnmount(() => {
   height: 100%;
   display: block;
   object-fit: cover;
+  border-radius: inherit;
 }
 .instance-link:hover .instance-avatar,
 .instance-link.active .instance-avatar {
@@ -854,6 +865,29 @@ onBeforeUnmount(() => {
   color: #071109;
   background: var(--green);
   border: 2px solid var(--surface-1);
+}
+.instance-avatar-edit {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  z-index: 2;
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #071109;
+  background: var(--green);
+  border: 2px solid var(--surface-1);
+  box-shadow: 0 3px 9px rgba(0, 0, 0, 0.42);
+  opacity: 1;
+  transition:
+    transform 0.16s var(--ease),
+    background 0.16s;
+}
+.instance-avatar-edit:hover {
+  transform: scale(1.14);
+  background: color-mix(in srgb, var(--green) 84%, white);
 }
 .instance-copy {
   min-width: 0;

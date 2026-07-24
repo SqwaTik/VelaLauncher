@@ -213,12 +213,15 @@ async function remoteClientInfo(): Promise<RemoteClientInfo> {
       releaseSha = release.target_commitish;
     }
   }
-  const jar =
-    releaseSha === commit.sha
-      ? release?.assets?.find((asset) =>
-          asset.name.toLowerCase().endsWith(".jar"),
-        )
-      : undefined;
+  const jar = release?.assets?.find((asset) =>
+    asset.name.toLowerCase().endsWith(".jar"),
+  );
+  // Launches only consume published, ready-to-run artifacts. A newer source
+  // commit must never turn the user's Play click into a local Gradle build.
+  const distributableSha = jar && releaseSha ? releaseSha : commit.sha;
+  const distributableVersion = jar
+    ? release?.tag_name ?? GAME.clientVersion
+    : GAME.clientVersion;
   const activeRoot = await gameDir();
   let installedSha: string | null = null;
   try {
@@ -238,12 +241,12 @@ async function remoteClientInfo(): Promise<RemoteClientInfo> {
     update: {
       checkedAt,
       available: installedSha
-        ? installedSha !== commit.sha
+        ? installedSha !== distributableSha
         : installed,
       installed: Boolean(installedSha),
       localCommitSha: installedSha,
-      remoteCommitSha: commit.sha,
-      remoteVersion: release?.tag_name ?? GAME.clientVersion,
+      remoteCommitSha: distributableSha,
+      remoteVersion: distributableVersion,
       commitMessage: commit.commit.message.split("\n")[0] || null,
       commitDate: commit.commit.committer?.date ?? null,
       delivery: jar ? "release" : "source-build",
@@ -485,7 +488,6 @@ async function buildRoyaleClient(
 
 async function installRoyaleClient(
   modsPath: string,
-  javaPath: string,
 ): Promise<void> {
   const remote = await remoteClientInfo();
   if (!remote.update.remoteCommitSha)
@@ -504,24 +506,19 @@ async function installRoyaleClient(
     .catch(() => 0);
 
   if (cachedSize < 1024) {
-    if (remote.asset) {
-      await runDownload(
-        remote.asset.url,
-        staged,
-        "royale",
-        0.78,
-        0.15,
-        "Загрузка Royale Master",
-        remote.asset.name,
+    if (!remote.asset)
+      throw new Error(
+        "Для текущей версии Royale Master ещё нет готовой сборки. Локальная Gradle-сборка при запуске отключена.",
       );
-    } else {
-      const built = await buildRoyaleClient(
-        remote.update.remoteCommitSha,
-        javaPath,
-        cacheRoot,
-      );
-      await fs.copyFile(built, staged);
-    }
+    await runDownload(
+      remote.asset.url,
+      staged,
+      "royale",
+      0.78,
+      0.15,
+      "Загрузка Royale Master",
+      remote.asset.name,
+    );
   } else {
     report(
       "royale",
@@ -575,7 +572,6 @@ async function installRoyaleClient(
 
 async function ensureRoyaleClientHealthy(
   storagePath: string,
-  javaPath: string,
 ): Promise<void> {
   let jarName = "";
   try {
@@ -594,7 +590,7 @@ async function ensureRoyaleClientHealthy(
     state: "launching",
     message: "Восстанавливаем Royale Master",
   });
-  await installRoyaleClient(join(storagePath, "mods"), javaPath);
+  await installRoyaleClient(join(storagePath, "mods"));
 }
 
 export async function pauseInstall(): Promise<boolean> {
@@ -766,7 +762,7 @@ export async function installGame(): Promise<void> {
 
     const modsPath = join(dir, "mods");
     await fs.mkdir(modsPath, { recursive: true });
-    await installRoyaleClient(modsPath, java.path);
+    await installRoyaleClient(modsPath);
     await repairInstalledMods((message) =>
       report("verify", 0.95, message, undefined, { canPause: false }),
     );
@@ -1083,7 +1079,7 @@ export async function launchGame(account: StoredAccount): Promise<void> {
     // silently before Fabric sees it. The launch button keeps one calm status
     // instead of exposing technical recovery work to the player.
     await repairInstalledMods();
-    await ensureRoyaleClientHealthy(dir, java.path);
+    await ensureRoyaleClientHealthy(dir);
     if (cancelled()) return;
     const automaticMax = Math.min(
       8192,

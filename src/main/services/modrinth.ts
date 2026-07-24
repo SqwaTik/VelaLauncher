@@ -374,6 +374,56 @@ async function writeMetadata(
   await fs.rename(temp, file);
 }
 
+interface ModHealthCache {
+  fingerprint: string;
+  checkedAt: number;
+}
+
+async function modSetFingerprint(dir: string): Promise<string> {
+  if (!existsSync(dir)) return createHash("sha1").update("empty").digest("hex");
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+  const files = entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".jar"))
+    .map((entry) => entry.name)
+    .sort((left, right) => left.localeCompare(right));
+  const rows = await Promise.all(
+    files.map(async (filename) => {
+      const stat = await fs.stat(join(dir, filename));
+      return `${filename}\0${stat.size}\0${stat.mtimeMs}`;
+    }),
+  );
+  return createHash("sha1").update(rows.join("\n")).digest("hex");
+}
+
+async function readModHealth(dir: string): Promise<ModHealthCache | null> {
+  try {
+    return JSON.parse(
+      await fs.readFile(join(dir, ".royale-mod-health.json"), "utf8"),
+    ) as ModHealthCache;
+  } catch {
+    return null;
+  }
+}
+
+async function writeModHealth(dir: string): Promise<void> {
+  const file = join(dir, ".royale-mod-health.json");
+  const temporary = `${file}.tmp`;
+  await fs.writeFile(
+    temporary,
+    JSON.stringify(
+      {
+        fingerprint: await modSetFingerprint(dir),
+        checkedAt: Date.now(),
+      } satisfies ModHealthCache,
+      null,
+      2,
+    ),
+    "utf8",
+  );
+  await fs.rm(file, { force: true });
+  await fs.rename(temporary, file);
+}
+
 async function digestFile(
   path: string,
   algorithm: "sha1" | "sha512",
@@ -554,7 +604,7 @@ function candidateSatisfies(
 
 async function fabricDescriptors(): Promise<FabricModDescriptor[]> {
   const dir = await modsDir();
-  const installed = (await listInstalled()).filter((mod) => mod.enabled);
+  const installed = (await listInstalled(false)).filter((mod) => mod.enabled);
   return (
     await Promise.all(
       installed.map((mod) =>
@@ -885,13 +935,22 @@ export async function repairInstalledMods(
   onStatus?: (message: string) => void,
 ): Promise<{ repaired: string[]; disabled: string[] }> {
   const dir = await modsDir();
-  const installed = await listInstalled();
+  const initialFingerprint = await modSetFingerprint(dir);
+  const health = await readModHealth(dir);
+  const installed = await listInstalled(false);
   const repaired: string[] = [];
   const disabled: string[] = [];
 
   for (const mod of installed.filter((entry) => entry.enabled)) {
     if (/^royale-master-/i.test(mod.filename)) continue;
     const path = join(dir, mod.filename);
+    const stat = await fs.stat(path);
+    const cachedValidationIsCurrent =
+      mod.expectedSize === stat.size &&
+      mod.validatedMtimeMs === stat.mtimeMs &&
+      (Boolean(mod.sha1) || !mod.projectId);
+    if (cachedValidationIsCurrent) continue;
+
     const structural = await isJarStructurallyValid(path);
     if (!mod.projectId || !mod.versionId) {
       if (!structural) {
@@ -899,7 +958,31 @@ export async function repairInstalledMods(
         await fs.rm(`${path}.disabled`, { force: true });
         await fs.rename(path, `${path}.disabled`);
         disabled.push(mod.title || mod.filename);
+      } else {
+        const metadata = await readMetadata(dir);
+        metadata[mod.filename] = {
+          ...metadata[mod.filename],
+          expectedSize: stat.size,
+          validatedMtimeMs: stat.mtimeMs,
+        };
+        await writeMetadata(dir, metadata);
       }
+      continue;
+    }
+
+    if (
+      structural &&
+      mod.sha1 &&
+      (!mod.expectedSize || mod.expectedSize === stat.size) &&
+      (await sha1File(path)) === mod.sha1
+    ) {
+      const metadata = await readMetadata(dir);
+      metadata[mod.filename] = {
+        ...metadata[mod.filename],
+        expectedSize: stat.size,
+        validatedMtimeMs: stat.mtimeMs,
+      };
+      await writeMetadata(dir, metadata);
       continue;
     }
 
@@ -915,7 +998,6 @@ export async function repairInstalledMods(
       continue;
     }
 
-    const stat = await fs.stat(path);
     const currentMetadata = await readMetadata(dir);
     const remembered = currentMetadata[mod.filename];
     // Never trust only size/mtime here. A failed write can keep both while
@@ -954,23 +1036,37 @@ export async function repairInstalledMods(
     repaired.push(mod.title || mod.filename);
   }
 
-  const dependencyRepairs = await reconcileRequiredModVersions(onStatus);
-  for (const title of dependencyRepairs) {
-    if (!repaired.includes(title)) repaired.push(title);
-  }
-  const compatibilityRepairs =
-    await reconcileFabricMetadataCompatibility(onStatus);
-  for (const title of compatibilityRepairs) {
-    if (!repaired.includes(title)) repaired.push(title);
+  if (
+    repaired.length === 0 &&
+    disabled.length === 0 &&
+    health?.fingerprint === initialFingerprint
+  ) {
+    return { repaired, disabled };
   }
 
+  // Local Fabric metadata is enough for the common healthy case. Modrinth is
+  // contacted only when the installed set changed and exposes a real issue.
+  const localIssues = fabricCompatibilityIssues(await fabricDescriptors());
+  if (localIssues.length) {
+    const dependencyRepairs = await reconcileRequiredModVersions(onStatus);
+    for (const title of dependencyRepairs) {
+      if (!repaired.includes(title)) repaired.push(title);
+    }
+    const compatibilityRepairs =
+      await reconcileFabricMetadataCompatibility(onStatus);
+    for (const title of compatibilityRepairs) {
+      if (!repaired.includes(title)) repaired.push(title);
+    }
+  }
+
+  await writeModHealth(dir);
   return { repaired, disabled };
 }
 
 async function reconcileRequiredModVersions(
   onStatus?: (message: string) => void,
 ): Promise<string[]> {
-  const current = await listInstalled();
+  const current = await listInstalled(false);
   const byProject = new Map(
     current
       .filter((mod) => mod.enabled && mod.projectId)
@@ -1493,7 +1589,9 @@ export function revealShaderPack(filename: string): Promise<void> {
   return revealPack("shader", filename);
 }
 
-export async function listInstalled(): Promise<InstalledMod[]> {
+export async function listInstalled(
+  enrichCatalogMetadata = true,
+): Promise<InstalledMod[]> {
   const dir = await modsDir();
   if (!existsSync(dir)) return [];
   const metadata = await readMetadata(dir);
@@ -1514,7 +1612,7 @@ export async function listInstalled(): Promise<InstalledMod[]> {
     });
   }
   let metadataChanged = false;
-  for (const mod of result) {
+  for (const mod of enrichCatalogMetadata ? result : []) {
     if (mod.iconUrl && mod.description) continue;
     try {
       let projectId = mod.projectId;

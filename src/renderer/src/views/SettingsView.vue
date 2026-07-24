@@ -14,7 +14,7 @@ const languageOpen = ref(false);
 const nativeLibrariesOpen = ref(false);
 const javaPathOpen = ref(false);
 const javaError = ref("");
-const launcherVersion = ref("0.1.3");
+const launcherVersion = ref("0.1.4");
 const languageLabel = computed(() =>
   settings.value?.language === "en"
     ? "English"
