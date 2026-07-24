@@ -7,10 +7,13 @@ import type {
 } from "@shared/types";
 
 function cleanError(error: unknown): string {
-  return (error instanceof Error ? error.message : String(error))
+  const value = (error instanceof Error ? error.message : String(error))
     .replace(/^Error invoking remote method '[^']+':\s*/i, "")
     .replace(/^Error:\s*/i, "")
     .trim();
+  if (!value || /^aggregate\s*error$/i.test(value))
+    return "Не удалось подключиться к Modrinth. Проверьте интернет и повторите попытку.";
+  return value.length > 260 ? `${value.slice(0, 257)}…` : value;
 }
 
 export const useResourcesStore = defineStore("resources", () => {

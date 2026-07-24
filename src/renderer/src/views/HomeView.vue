@@ -328,7 +328,7 @@ onBeforeUnmount(() => {
     >
       <article
         class="dashboard-card mods-card"
-        @dblclick="router.push('/mods')"
+        @click="router.push('/mods?tab=installed')"
       >
         <header>
           <span
@@ -336,7 +336,10 @@ onBeforeUnmount(() => {
               tr("Моды", "Mods", "Mods")
             }}</span
           >
-          <button title="Открыть моды" @click="router.push('/mods')">
+          <button
+            title="Открыть установленные моды"
+            @click.stop="router.push('/mods?tab=installed')"
+          >
             <Icon name="chevron" :size="15" />
           </button>
         </header>
@@ -404,7 +407,7 @@ onBeforeUnmount(() => {
 
       <article
         class="dashboard-card resources-card"
-        @dblclick="router.push('/resources')"
+        @click="router.push('/resources?tab=installed')"
       >
         <header>
           <span
@@ -412,7 +415,10 @@ onBeforeUnmount(() => {
               tr("Ресурсы", "Resources", "Recursos")
             }}</span
           >
-          <button title="Открыть ресурспаки" @click="router.push('/resources')">
+          <button
+            title="Открыть установленные ресурспаки"
+            @click.stop="router.push('/resources?tab=installed')"
+          >
             <Icon name="chevron" :size="15" />
           </button>
         </header>
@@ -575,7 +581,7 @@ onBeforeUnmount(() => {
                 ['downloading', 'launching'].includes(launcher.state)
                   ? 'spinner'
                   : launcher.state === 'paused'
-                    ? 'pause'
+                    ? 'play'
                     : launcher.isInstalled
                       ? 'check'
                       : 'download'
@@ -605,8 +611,10 @@ onBeforeUnmount(() => {
           :class="{
             busy,
             installing: ['downloading', 'paused'].includes(launcher.state),
+            paused: launcher.state === 'paused',
+            transporting: launcher.transportBusy,
           }"
-          :disabled="busy"
+          :disabled="busy || launcher.transportBusy"
           @click="launch"
         >
           <span
@@ -1126,7 +1134,7 @@ onBeforeUnmount(() => {
   z-index: 2;
 }
 .launch-zone {
-  width: 320px;
+  width: 286px;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -1229,7 +1237,7 @@ onBeforeUnmount(() => {
 }
 .launch-pill {
   position: relative;
-  width: 286px;
+  width: 100%;
   height: 66px;
   padding: 0 8px;
   display: grid;
@@ -1248,7 +1256,7 @@ onBeforeUnmount(() => {
     filter 0.3s;
 }
 .launch-pill.installing {
-  width: 232px;
+  width: 100%;
   grid-template-columns: 42px 1fr 38px;
   gap: 4px;
 }
@@ -1279,6 +1287,29 @@ onBeforeUnmount(() => {
   place-items: center;
   border-radius: 50%;
   background: #ffffff2b;
+  transition:
+    transform 0.18s var(--ease),
+    background 0.18s ease,
+    box-shadow 0.18s ease;
+}
+.play-orb :deep(svg) {
+  transition:
+    transform 0.18s var(--ease),
+    opacity 0.18s ease;
+}
+.launch-pill.installing:hover:not(:disabled) .play-orb {
+  transform: scale(1.08);
+  background: #ffffff42;
+  box-shadow: 0 0 0 5px #ffffff12;
+}
+.launch-pill.installing:hover:not(:disabled) .play-orb :deep(svg) {
+  transform: scale(1.14);
+}
+.launch-pill.paused .play-orb {
+  animation: resume-pulse 1.35s ease-in-out infinite;
+}
+.launch-pill.transporting .play-orb :deep(svg) {
+  animation: control-pop 0.42s var(--ease) infinite alternate;
 }
 .launch-settings {
   width: 42px;
@@ -1305,7 +1336,8 @@ onBeforeUnmount(() => {
   position: absolute;
   left: 38px;
   bottom: 88px;
-  max-width: 540px;
+  width: min(360px, calc(100% - 76px));
+  max-height: 78px;
   display: flex;
   gap: 8px;
   padding: 10px 12px;
@@ -1313,7 +1345,10 @@ onBeforeUnmount(() => {
   color: var(--danger);
   background: rgba(36, 17, 20, 0.92);
   border: 1px solid rgba(255, 93, 108, 0.25);
-  font-size: 12px;
+  overflow: auto;
+  font-size: 10px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 .content-dashboard {
   position: relative;
@@ -1618,6 +1653,25 @@ onBeforeUnmount(() => {
     transform: rotate(360deg);
   }
 }
+@keyframes resume-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 #ffffff24;
+  }
+  50% {
+    box-shadow: 0 0 0 7px #ffffff00;
+  }
+}
+@keyframes control-pop {
+  from {
+    transform: scale(0.78);
+    opacity: 0.65;
+  }
+  to {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+}
 @media (max-width: 920px) {
   .default-visual {
     right: -40px;
@@ -1685,7 +1739,7 @@ onBeforeUnmount(() => {
     align-items: stretch;
   }
   .operation-status {
-    max-width: 420px;
+    max-width: none;
   }
   .launch-pill {
     align-self: flex-end;

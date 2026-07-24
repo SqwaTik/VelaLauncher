@@ -3,6 +3,13 @@
 export type AccountType = "microsoft" | "offline" | "ely" | "littleskin";
 export type SkinModel = "classic" | "slim";
 
+export interface CustomCape {
+  id: string;
+  name: string;
+  dataUrl: string;
+  createdAt: number;
+}
+
 export interface StoredAccount {
   id: string;
   username: string;
@@ -11,6 +18,9 @@ export interface StoredAccount {
   skinModel: SkinModel;
   /** Locally edited 64x64 PNG used by the launcher preview. */
   skinDataUrl?: string;
+  /** Local cape wardrobe used by the Royale preview/client integration. */
+  customCapes?: CustomCape[];
+  activeCustomCapeId?: string | null;
   /** MS access token, if any (never rendered). */
   accessToken?: string;
   refreshToken?: string;
@@ -164,6 +174,15 @@ export interface ClientUpdateInfo {
   commitDate: string | null;
   /** Release jar when available, otherwise the launcher builds the public source commit. */
   delivery: "release" | "source-build" | null;
+}
+
+export interface LauncherUpdateInfo {
+  currentVersion: string;
+  latestVersion: string;
+  available: boolean;
+  releaseUrl: string;
+  downloadUrl: string | null;
+  publishedAt: string | null;
 }
 
 export interface GameContentSummary {

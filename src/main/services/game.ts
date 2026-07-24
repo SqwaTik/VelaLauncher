@@ -198,12 +198,13 @@ function taskPhase(task: Task<unknown>): {
   };
 }
 
-function minecraftTaskContext(): TaskContext {
+function minecraftTaskContext(onActivity?: () => void): TaskContext {
   let lastBytes = 0;
   let lastAt = Date.now();
   let speed = 0;
   return {
     onUpdate(task) {
+      onActivity?.();
       const mapped = taskPhase(task);
       const total = Math.max(0, task.total);
       const written = Math.max(0, task.progress);
@@ -237,6 +238,7 @@ function minecraftTaskContext(): TaskContext {
       );
     },
     onResumed() {
+      onActivity?.();
       emitProgress({
         ...lastProgress,
         phase: "client",
@@ -530,7 +532,14 @@ function installationErrorMessage(error: unknown): string {
   const unique = [...new Set(messages.map((message) => message.trim()))];
   if (!unique.length)
     return "Не удалось подключиться к серверу загрузки. Проверьте интернет и повторите попытку.";
-  return unique.join(" · ");
+  const useful = unique.filter(
+    (message) =>
+      !/^aggregate\s*error$/i.test(message) &&
+      !/^fetch failed$/i.test(message) &&
+      !/^error$/i.test(message),
+  );
+  const joined = (useful.length ? useful : unique).slice(0, 2).join(" · ");
+  return joined.length > 280 ? `${joined.slice(0, 277)}…` : joined;
 }
 
 export async function installGame(): Promise<void> {
@@ -564,12 +573,63 @@ export async function installGame(): Promise<void> {
         `Версия Minecraft ${GAME.minecraftVersion} не найдена в официальном манифесте`,
       );
 
-    const task = installTask(meta, folder);
-    currentTask = task;
-    const resolved: ResolvedVersion = await task.startAndWait(
-      minecraftTaskContext(),
-    );
-    currentTask = null;
+    let resolved: ResolvedVersion | null = null;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const task = installTask(meta, folder);
+      let lastActivity = Date.now();
+      let stalled = false;
+      currentTask = task;
+      const watchdog = setInterval(() => {
+        if (
+          task.isRunning &&
+          !task.isPaused &&
+          Date.now() - lastActivity > 45_000
+        ) {
+          stalled = true;
+          void task.cancel().catch(() => undefined);
+        }
+      }, 5_000);
+      try {
+        resolved = await task.startAndWait(
+          minecraftTaskContext(() => {
+            lastActivity = Date.now();
+          }),
+        );
+        currentTask = null;
+        break;
+      } catch (cause) {
+        currentTask = null;
+        if (
+          cancelRequested ||
+          (cause instanceof CancelledError && !stalled) ||
+          attempt === 3
+        ) {
+          throw stalled
+            ? new Error(
+                "Загрузка не получала данные больше 45 секунд. Проверьте соединение и повторите попытку.",
+              )
+            : cause;
+        }
+        report(
+          "metadata",
+          lastProgress.progress,
+          stalled
+            ? "Загрузка остановилась — продолжаем"
+            : "Повторное подключение",
+          `Автоматическая попытка ${attempt + 1} из 3`,
+          { canPause: false },
+        );
+        await new Promise<void>((resolve) =>
+          setTimeout(resolve, 700 * attempt),
+        );
+      } finally {
+        clearInterval(watchdog);
+      }
+    }
+    if (!resolved)
+      throw new Error(
+        "Не удалось загрузить Minecraft после трёх попыток. Проверьте соединение.",
+      );
     if (cancelRequested) throw new Error("Установка отменена");
 
     report(

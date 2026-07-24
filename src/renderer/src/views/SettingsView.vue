@@ -4,22 +4,35 @@ import Icon from "@/components/Icon.vue";
 import UiSwitch from "@/components/ui/UiSwitch.vue";
 import { GAME } from "@shared/constants";
 import { useSettingsStore } from "@/stores/settings";
-import { useLauncherStore } from "@/stores/launcher";
 import { useLocale } from "@/composables/useLocale";
 
 const store = useSettingsStore();
-const launcher = useLauncherStore();
 const { tr } = useLocale();
 const settings = computed(() => store.settings);
 const active = ref("appearance");
 const languageOpen = ref(false);
 const javaError = ref("");
+const launcherVersion = ref("0.1.0");
 const languageLabel = computed(() =>
   settings.value?.language === "en"
     ? "English"
     : settings.value?.language === "es"
       ? "Español"
       : "Русский",
+);
+const launcherUpdateVersion = computed(() => {
+  const update = store.launcherUpdate;
+  if (!update) return `v${launcherVersion.value}`;
+  return update.available
+    ? `v${update.currentVersion} → v${update.latestVersion}`
+    : `v${update.currentVersion}`;
+});
+const launcherUpdateAction = computed(() =>
+  store.launcherUpdate?.available
+    ? tr("Обновить", "Update", "Actualizar")
+    : store.launcherUpdate
+      ? tr("Актуально", "Up to date", "Actualizado")
+      : tr("Проверить", "Check", "Comprobar"),
 );
 
 const sections = [
@@ -159,7 +172,10 @@ onMounted(async () => {
     passive: true,
   });
   syncNavigation();
-  void launcher.checkUpdate();
+  void window.royale.app
+    .getVersion()
+    .then((version) => (launcherVersion.value = version));
+  void store.checkLauncherUpdate();
 });
 onBeforeUnmount(() => {
   if (unlockTimer) clearTimeout(unlockTimer);
@@ -693,35 +709,31 @@ onBeforeUnmount(() => {
         <div class="setting-card update-card">
           <div class="setting-icon"><Icon name="rocket" :size="19" /></div>
           <div class="setting-copy">
-            <b>Обновление Royale Master</b
-            ><small v-if="launcher.updateChecking"
-              >Проверяем сервер обновлений…</small
-            ><small v-else-if="launcher.updateError" class="update-error"
-              >Не удалось проверить: {{ launcher.updateError }}</small
-            ><small v-else-if="launcher.updateInfo"
-              ><template v-if="launcher.updateCheckedAt"
-                >Проверено только что · </template
-              >{{
-                !launcher.updateInfo.installed
-                  ? "Клиент ещё не установлен — установка доступна на главной"
-                  : launcher.updateInfo.available
-                    ? "Доступна новая версия — кнопка обновления появилась на главной"
-                    : "Установлена последняя доступная версия"
-              }} </small
-            ><small v-else>Нажмите кнопку, чтобы проверить новую версию</small>
+            <b>Обновление Royale Launcher</b
+            ><small v-if="store.launcherUpdateError" class="update-error"
+              >Не удалось проверить: {{ store.launcherUpdateError }}</small
+            ><small v-else-if="store.launcherUpdate?.available"
+              >Доступен новый установщик Royale Launcher v{{
+                store.launcherUpdate.latestVersion
+              }}</small
+            ><small v-else
+              >Проверка версии лаунчера выполняется через официальный
+              репозиторий.</small
+            >
           </div>
           <button
-            class="btn"
-            :disabled="launcher.updateChecking"
-            @click="launcher.checkUpdate()"
+            class="btn launcher-update-button"
+            @click="store.openLauncherUpdate()"
           >
             <Icon
-              :name="launcher.updateChecking ? 'spinner' : 'refresh'"
+              :name="store.launcherUpdateChecking ? 'spinner' : 'refresh'"
               :size="15"
-              :class="{ spin: launcher.updateChecking }"
-            />{{
-              launcher.updateChecking ? "Проверяем…" : "Проверить обновления"
-            }}
+              :class="{ spin: store.launcherUpdateChecking }"
+            />
+            <span
+              ><small>{{ launcherUpdateVersion }}</small
+              ><b>{{ launcherUpdateAction }}</b></span
+            >
           </button>
         </div>
       </section>
@@ -1116,6 +1128,41 @@ label small {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+.launcher-update-button {
+  min-width: 154px;
+  min-height: 43px;
+  padding: 6px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 9px;
+  border-color: var(--green-line);
+  background: var(--green-soft);
+}
+.launcher-update-button > span {
+  min-width: 0;
+  display: block;
+  text-align: left;
+}
+.launcher-update-button small,
+.launcher-update-button b {
+  display: block;
+  white-space: nowrap;
+}
+.launcher-update-button small {
+  color: var(--text-3);
+  font: 8px var(--font-num);
+}
+.launcher-update-button b {
+  margin-top: 2px;
+  color: var(--green);
+  font-size: 10px;
+}
+.launcher-update-button:hover {
+  transform: translateY(-1px);
+  border-color: var(--green);
+  background: rgba(83, 195, 106, 0.15);
 }
 .setting-copy small.update-error {
   color: var(--danger);

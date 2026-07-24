@@ -51,6 +51,7 @@ export const IPC = {
   windowClose: "window:close",
   windowIsMaximized: "window:is-maximized",
   appGetVersion: "app:get-version",
+  appCheckUpdate: "app:check-update",
   openExternal: "app:open-external",
   pickFolder: "app:pick-folder",
   pickImage: "app:pick-image",
@@ -87,6 +88,7 @@ export const IPC = {
   // skin / cape profile
   appearanceGet: "appearance:get",
   appearancePickSkin: "appearance:pick-skin",
+  appearancePickCape: "appearance:pick-cape",
   appearanceExportSkin: "appearance:export-skin",
   appearanceUploadSkin: "appearance:upload-skin",
   appearanceResetSkin: "appearance:reset-skin",

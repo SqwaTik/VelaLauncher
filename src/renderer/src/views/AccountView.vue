@@ -121,11 +121,6 @@ function confirmRemove(dontAsk: boolean): void {
           }}
         </p>
       </div>
-      <button class="btn btn-primary" @click="showAddAccount = true">
-        <Icon name="plus" :size="17" />{{
-          tr("Добавить профиль", "Add profile", "Añadir perfil")
-        }}
-      </button>
     </header>
 
     <div class="account-layout">
@@ -134,6 +129,7 @@ function confirmRemove(dontAsk: boolean): void {
           <div class="skin-stage">
             <span class="skin-glow" /><SkinPreview3D
               :skin="account.skinSource"
+              :cape="account.capeSource"
               :model="skinModel"
             />
           </div>
@@ -161,6 +157,107 @@ function confirmRemove(dontAsk: boolean): void {
           </button>
         </section>
 
+        <section v-if="account.active" class="cape-wardrobe">
+          <header>
+            <div>
+              <h3>
+                {{ tr("Гардероб плащей", "Cape wardrobe", "Armario de capas") }}
+              </h3>
+              <span>{{ account.customCapes.length }}/5</span>
+            </div>
+            <p>
+              {{
+                tr(
+                  "Клик — выбрать и заменить, ПКМ — удалить",
+                  "Click to select and replace, right-click to remove",
+                  "Clic para elegir y reemplazar, clic derecho para eliminar",
+                )
+              }}
+            </p>
+          </header>
+          <div class="cape-list">
+            <button
+              class="cape-tile no-cape"
+              :class="{
+                active:
+                  !account.activeCustomCape &&
+                  !account.appearance?.capes.some(
+                    (cape) => cape.state === 'ACTIVE',
+                  ),
+              }"
+              :title="
+                tr('Без локального плаща', 'No local cape', 'Sin capa local')
+              "
+              @click="account.disableCape()"
+            >
+              <Icon name="close" :size="16" /><small>{{
+                tr("Нет", "None", "Ninguna")
+              }}</small>
+            </button>
+            <button
+              v-for="cape in account.appearance?.capes ?? []"
+              :key="`official-${cape.id}`"
+              class="cape-tile"
+              :class="{
+                active: !account.activeCustomCape && cape.state === 'ACTIVE',
+              }"
+              :disabled="account.active?.type !== 'microsoft'"
+              :title="
+                account.active?.type === 'microsoft'
+                  ? tr(
+                      'Выбрать официальный плащ',
+                      'Select official cape',
+                      'Elegir capa oficial',
+                    )
+                  : tr(
+                      'Плащ этого сервиса доступен для просмотра',
+                      'This service cape is available for preview',
+                      'La capa de este servicio está disponible como vista previa',
+                    )
+              "
+              @click="account.selectCape(cape.id)"
+            >
+              <img :src="cape.url" :alt="cape.alias" /><small>{{
+                cape.alias
+              }}</small>
+            </button>
+            <button
+              v-for="cape in account.customCapes"
+              :key="cape.id"
+              class="cape-tile"
+              :class="{ active: account.activeCustomCape?.id === cape.id }"
+              :title="
+                tr(
+                  'Нажмите, чтобы выбрать или заменить. ПКМ — удалить',
+                  'Click to select or replace. Right-click to remove',
+                  'Clic para elegir o reemplazar. Clic derecho para eliminar',
+                )
+              "
+              @click="account.editCustomCape(cape.id)"
+              @contextmenu.prevent="account.removeCustomCape(cape.id)"
+            >
+              <img :src="cape.dataUrl" :alt="cape.name" /><small>{{
+                cape.name
+              }}</small>
+            </button>
+            <button
+              v-if="account.customCapes.length < 5"
+              class="cape-tile add-cape"
+              :title="
+                tr('Загрузить PNG-плащ', 'Upload PNG cape', 'Subir capa PNG')
+              "
+              @click="account.addCustomCape()"
+            >
+              <Icon name="plus" :size="18" /><small>{{
+                tr("Добавить", "Add", "Añadir")
+              }}</small>
+            </button>
+          </div>
+          <p v-if="account.appearanceError" class="cape-error">
+            <Icon name="alert" :size="13" />{{ account.appearanceError }}
+          </p>
+        </section>
+
         <section class="accounts-panel">
           <header>
             <div>
@@ -168,6 +265,7 @@ function confirmRemove(dontAsk: boolean): void {
               <span>{{ account.accounts.length }}</span>
             </div>
             <button
+              v-if="account.accounts.length"
               class="icon-button"
               title="Добавить"
               @click="showAddAccount = true"
@@ -466,6 +564,7 @@ function confirmRemove(dontAsk: boolean): void {
   gap: 13px;
 }
 .identity-card,
+.cape-wardrobe,
 .accounts-panel,
 .studio-hero,
 .appearance-section {
@@ -537,6 +636,98 @@ function confirmRemove(dontAsk: boolean): void {
 .edit-skin:hover {
   transform: translateY(-2px);
   box-shadow: var(--glow-green);
+}
+.cape-wardrobe {
+  padding: 12px;
+}
+.cape-wardrobe > header {
+  padding: 1px 2px 10px;
+}
+.cape-wardrobe > header > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.cape-wardrobe h3 {
+  color: var(--text-0);
+  font-size: 12px;
+}
+.cape-wardrobe header span {
+  padding: 3px 7px;
+  border-radius: 999px;
+  color: var(--green);
+  background: var(--green-soft);
+  font: 8px var(--font-num);
+}
+.cape-wardrobe header p {
+  margin-top: 4px;
+  color: var(--text-3);
+  font-size: 8px;
+}
+.cape-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+.cape-tile {
+  position: relative;
+  min-width: 0;
+  height: 74px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  color: var(--text-3);
+  background: var(--surface-2);
+}
+.cape-tile:hover {
+  transform: translateY(-2px);
+  color: var(--text-1);
+  border-color: var(--hairline-strong);
+}
+.cape-tile.active {
+  color: var(--green);
+  border-color: var(--green-line);
+  background: var(--green-soft);
+  box-shadow: inset 0 0 0 1px rgba(83, 195, 106, 0.08);
+}
+.cape-tile img {
+  width: 48px;
+  height: 40px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+.cape-tile small {
+  width: 100%;
+  overflow: hidden;
+  color: currentColor;
+  font-size: 7.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.add-cape {
+  border-style: dashed;
+  color: var(--green);
+}
+.no-cape {
+  color: var(--text-3);
+}
+.cape-error {
+  margin-top: 8px;
+  padding: 7px 8px;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  border-radius: 8px;
+  color: var(--danger);
+  background: rgba(255, 93, 108, 0.09);
+  font-size: 8px;
+  line-height: 1.4;
 }
 .accounts-panel {
   padding: 12px;
@@ -643,10 +834,19 @@ function confirmRemove(dontAsk: boolean): void {
 .first-account {
   width: 100%;
   height: 48px;
+  padding: 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   border-radius: 10px;
   color: var(--green);
   background: var(--green-soft);
   font-size: 10.5px;
+  text-align: center;
+}
+.first-account :deep(svg) {
+  flex: none;
 }
 .studio-hero {
   padding: 22px;

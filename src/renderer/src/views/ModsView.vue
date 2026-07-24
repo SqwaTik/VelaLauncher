@@ -13,13 +13,16 @@ import { useResourcesStore } from "@/stores/resources";
 import { useSettingsStore } from "@/stores/settings";
 import { useLocale } from "@/composables/useLocale";
 
-const resourceMode = useRoute().name === "resources";
+const route = useRoute();
+const resourceMode = route.name === "resources";
 const mods = (resourceMode
   ? useResourcesStore()
   : useModsStore()) as unknown as ReturnType<typeof useModsStore>;
 const settingsStore = useSettingsStore();
 const { language, tr } = useLocale();
-const tab = ref<"market" | "installed">("market");
+const tab = ref<"market" | "installed">(
+  route.query.tab === "installed" ? "installed" : "market",
+);
 const query = ref("");
 const category = ref("all");
 const sort = ref("relevance");
@@ -93,6 +96,13 @@ const canLoadMore = computed(
 );
 const currentGallery = computed(
   () => detail.value?.project.gallery[galleryIndex.value] ?? null,
+);
+
+watch(
+  () => route.query.tab,
+  (value) => {
+    if (value === "market" || value === "installed") tab.value = value;
+  },
 );
 
 function formatDownloads(value: number): string {
@@ -1113,8 +1123,13 @@ onBeforeUnmount(() => {
   font-size: 11px;
 }
 .message.error {
+  max-height: 72px;
+  overflow: auto;
   color: var(--danger);
   background: rgba(255, 93, 108, 0.1);
+  font-size: 10px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 .message.success {
   color: var(--green);

@@ -8,6 +8,7 @@ import type { SkinModel } from "@shared/types";
 const props = withDefaults(
   defineProps<{
     skin?: string | null;
+    cape?: string | null;
     model?: SkinModel;
     autoRotate?: boolean;
     innerLayer?: boolean;
@@ -21,6 +22,7 @@ const props = withDefaults(
   }>(),
   {
     skin: null,
+    cape: null,
     model: "classic",
     autoRotate: true,
     innerLayer: true,
@@ -43,6 +45,7 @@ const loading = ref(true);
 let viewer: SkinViewer | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let loadNonce = 0;
+let capeLoadNonce = 0;
 let disposed = false;
 let modelDrawing = false;
 const raycaster = new Raycaster();
@@ -149,6 +152,19 @@ async function loadSkin(source: string | null | undefined): Promise<void> {
   }
   if (nonce === loadNonce) applyLayers();
 }
+async function loadCape(source: string | null | undefined): Promise<void> {
+  if (!viewer) return;
+  const nonce = ++capeLoadNonce;
+  if (!source) {
+    viewer.loadCape(null);
+    return;
+  }
+  try {
+    await viewer.loadCape(source);
+  } catch {
+    if (nonce === capeLoadNonce) viewer.resetCape();
+  }
+}
 
 onMounted(async () => {
   // Let the route/modal paint its shell before WebGL and the dynamic module
@@ -178,6 +194,7 @@ onMounted(async () => {
   resizeObserver = new ResizeObserver(resize);
   resizeObserver.observe(host.value);
   await loadSkin(props.skin);
+  await loadCape(props.cape);
   loading.value = false;
 });
 onBeforeUnmount(() => {
@@ -190,6 +207,10 @@ onBeforeUnmount(() => {
 watch(
   () => props.skin,
   (value) => void loadSkin(value),
+);
+watch(
+  () => props.cape,
+  (value) => void loadCape(value),
 );
 watch(
   () => props.model,

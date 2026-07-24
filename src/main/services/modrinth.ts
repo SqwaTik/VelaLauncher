@@ -24,6 +24,41 @@ import { modsDir, resourcePacksDir } from "./store";
 const UA = "SqwaTik/RoyaleLauncher (royale-launcher)";
 const responseCache = new Map<string, { expires: number; value: unknown }>();
 
+async function fetchWithRetry(
+  input: string | URL,
+  attempts = 3,
+): Promise<Response> {
+  let lastResponse: Response | null = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const response = await fetch(input, {
+        headers: { "User-Agent": UA },
+      });
+      if (
+        response.ok ||
+        (response.status !== 408 &&
+          response.status !== 425 &&
+          response.status !== 429 &&
+          response.status < 500)
+      ) {
+        return response;
+      }
+      lastResponse = response;
+    } catch {
+      lastResponse = null;
+    }
+    if (attempt + 1 < attempts) {
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, 450 * (attempt + 1)),
+      );
+    }
+  }
+  if (lastResponse) return lastResponse;
+  throw new Error(
+    "Сервер загрузки временно недоступен. Проверьте интернет и повторите попытку.",
+  );
+}
+
 async function api<T>(
   path: string,
   params?: Record<string, string>,
@@ -36,7 +71,7 @@ async function api<T>(
   const cached = responseCache.get(key);
   if (cached && cached.expires > Date.now()) return cached.value as T;
 
-  const response = await fetch(url, { headers: { "User-Agent": UA } });
+  const response = await fetchWithRetry(url);
   if (!response.ok)
     throw new Error(`Modrinth ${response.status}: ${response.statusText}`);
   const value = (await response.json()) as T;
@@ -335,7 +370,7 @@ export async function installMod(
   const temporary = `${destination}.part`;
 
   emitModProgress(version.filename, 0, false);
-  const response = await fetch(version.url, { headers: { "User-Agent": UA } });
+  const response = await fetchWithRetry(version.url);
   if (!response.ok || !response.body)
     throw new Error(`Загрузка не удалась: ${response.status}`);
 
@@ -546,7 +581,7 @@ async function installResourceFile(
   const destination = join(dir, version.filename);
   const temporary = `${destination}.part`;
   emitResourceProgress(version.filename, 0, false);
-  const response = await fetch(version.url, { headers: { "User-Agent": UA } });
+  const response = await fetchWithRetry(version.url);
   if (!response.ok || !response.body)
     throw new Error(`Не удалось загрузить ресурспак: ${response.status}`);
   const total = Number(

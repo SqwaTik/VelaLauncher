@@ -7,6 +7,7 @@ import type {
   Friend,
   MsAuthStatus,
   MinecraftAppearance,
+  CustomCape,
   ElyLoginInput,
   LittleSkinLoginInput,
 } from "@shared/types";
@@ -83,6 +84,19 @@ export const useAccountStore = defineStore("account", () => {
   const appearanceLoading = ref(false);
   const appearanceError = ref("");
   const appearanceNonce = ref(Date.now());
+  const customCapes = computed(() => active.value?.customCapes ?? []);
+  const activeCustomCape = computed(
+    () =>
+      customCapes.value.find(
+        (cape) => cape.id === active.value?.activeCustomCapeId,
+      ) ?? null,
+  );
+  const capeSource = computed(
+    () =>
+      activeCustomCape.value?.dataUrl ||
+      appearance.value?.capes.find((cape) => cape.state === "ACTIVE")?.url ||
+      null,
+  );
 
   function avatarOf(
     a: Pick<StoredAccount, "username" | "uuid" | "type">,
@@ -345,9 +359,93 @@ export const useAccountStore = defineStore("account", () => {
         : await window.royale.appearance.hideCape(
             JSON.parse(JSON.stringify(current)),
           );
+      current.activeCustomCapeId = null;
+      await persist();
     } finally {
       appearanceLoading.value = false;
     }
+  }
+
+  async function addCustomCape(): Promise<void> {
+    const current = active.value;
+    if (!current) {
+      appearanceError.value = "Сначала выберите профиль.";
+      return;
+    }
+    const capes = current.customCapes ?? [];
+    if (capes.length >= 5) {
+      appearanceError.value = "В гардеробе может быть не больше 5 плащей.";
+      return;
+    }
+    appearanceError.value = "";
+    try {
+      const dataUrl = await window.royale.appearance.pickCape();
+      if (!dataUrl) return;
+      const cape: CustomCape = {
+        id: `cape-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        name: `Плащ ${capes.length + 1}`,
+        dataUrl,
+        createdAt: Date.now(),
+      };
+      current.customCapes = [...capes, cape];
+      current.activeCustomCapeId = cape.id;
+      await persist();
+    } catch (cause) {
+      appearanceError.value = userFacingError(
+        cause,
+        "Не удалось добавить плащ.",
+      );
+    }
+  }
+
+  async function editCustomCape(capeId: string): Promise<void> {
+    const current = active.value;
+    const capes = current?.customCapes ?? [];
+    const index = capes.findIndex((cape) => cape.id === capeId);
+    if (!current || index < 0) return;
+    current.activeCustomCapeId = capeId;
+    appearanceError.value = "";
+    try {
+      const dataUrl = await window.royale.appearance.pickCape();
+      if (dataUrl) {
+        const next = [...capes];
+        next[index] = { ...next[index], dataUrl, createdAt: Date.now() };
+        current.customCapes = next;
+      }
+      await persist();
+    } catch (cause) {
+      appearanceError.value = userFacingError(
+        cause,
+        "Не удалось заменить плащ.",
+      );
+    }
+  }
+
+  async function clearCustomCape(): Promise<void> {
+    if (!active.value) return;
+    active.value.activeCustomCapeId = null;
+    await persist();
+  }
+
+  async function disableCape(): Promise<void> {
+    if (
+      active.value?.type === "microsoft" &&
+      appearance.value?.capes.some((cape) => cape.state === "ACTIVE")
+    ) {
+      await selectCape(null);
+      return;
+    }
+    await clearCustomCape();
+  }
+
+  async function removeCustomCape(capeId: string): Promise<void> {
+    if (!active.value) return;
+    active.value.customCapes = (active.value.customCapes ?? []).filter(
+      (cape) => cape.id !== capeId,
+    );
+    if (active.value.activeCustomCapeId === capeId)
+      active.value.activeCustomCapeId = null;
+    await persist();
   }
 
   function remove(id: string): void {
@@ -455,6 +553,9 @@ export const useAccountStore = defineStore("account", () => {
     active,
     avatar,
     skinSource,
+    capeSource,
+    customCapes,
+    activeCustomCape,
     avatarOf,
     bodyOf,
     friends,
@@ -484,6 +585,11 @@ export const useAccountStore = defineStore("account", () => {
     uploadSkin,
     resetSkin,
     selectCape,
+    addCustomCape,
+    editCustomCape,
+    clearCustomCape,
+    disableCape,
+    removeCustomCape,
     remove,
     ensureActiveSession,
     addFriend,

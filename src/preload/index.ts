@@ -23,6 +23,7 @@ import type {
   ElyLoginInput,
   LittleSkinLoginInput,
   InstalledResourcePack,
+  LauncherUpdateInfo,
 } from "../shared/types";
 
 /** Subscribe helper: returns an unsubscribe fn so callers can clean up. */
@@ -35,6 +36,8 @@ function on<T>(channel: string, cb: (payload: T) => void): () => void {
 const api = {
   app: {
     getVersion: (): Promise<string> => ipcRenderer.invoke(IPC.appGetVersion),
+    checkUpdate: (): Promise<LauncherUpdateInfo> =>
+      ipcRenderer.invoke(IPC.appCheckUpdate),
     openExternal: (url: string): Promise<void> =>
       ipcRenderer.invoke(IPC.openExternal, url),
     pickFolder: (): Promise<string | null> =>
@@ -96,6 +99,8 @@ const api = {
       ipcRenderer.invoke(IPC.appearanceGet, account),
     pickSkin: (): Promise<string | null> =>
       ipcRenderer.invoke(IPC.appearancePickSkin),
+    pickCape: (): Promise<string | null> =>
+      ipcRenderer.invoke(IPC.appearancePickCape),
     exportSkin: (dataUrl: string): Promise<boolean> =>
       ipcRenderer.invoke(IPC.appearanceExportSkin, dataUrl),
     uploadSkin: (

@@ -5,6 +5,7 @@ import type {
   GameContentSummary,
   InstallProgress,
   JavaInfo,
+  LauncherUpdateInfo,
   SystemMemoryInfo,
 } from "@shared/types";
 
@@ -24,6 +25,9 @@ export const useSettingsStore = defineStore("settings", () => {
   const detectingJava = ref(false);
   const installingJava = ref(false);
   const javaInstallProgress = ref<InstallProgress | null>(null);
+  const launcherUpdate = ref<LauncherUpdateInfo | null>(null);
+  const launcherUpdateChecking = ref(false);
+  const launcherUpdateError = ref("");
   const screenshotPaths = ref<string[]>([]);
   const content = ref<GameContentSummary>({
     mods: 0,
@@ -163,6 +167,36 @@ export const useSettingsStore = defineStore("settings", () => {
     await saveNow();
   }
 
+  async function checkLauncherUpdate(): Promise<void> {
+    if (launcherUpdateChecking.value) return;
+    launcherUpdateChecking.value = true;
+    launcherUpdateError.value = "";
+    try {
+      launcherUpdate.value = await window.royale.app.checkUpdate();
+    } catch (cause) {
+      const raw = cause instanceof Error ? cause.message : String(cause);
+      launcherUpdateError.value =
+        raw
+          .replace(/^Error invoking remote method '[^']+':\s*/i, "")
+          .replace(/^Error:\s*/i, "")
+          .trim()
+          .slice(0, 180) || "Сервис обновлений временно недоступен.";
+    } finally {
+      launcherUpdateChecking.value = false;
+    }
+  }
+
+  async function openLauncherUpdate(): Promise<void> {
+    const update = launcherUpdate.value;
+    if (!update?.available) {
+      await checkLauncherUpdate();
+      return;
+    }
+    await window.royale.app.openExternal(
+      update.downloadUrl || update.releaseUrl,
+    );
+  }
+
   return {
     settings,
     java,
@@ -175,6 +209,9 @@ export const useSettingsStore = defineStore("settings", () => {
     content,
     installingJava,
     javaInstallProgress,
+    launcherUpdate,
+    launcherUpdateChecking,
+    launcherUpdateError,
     hydrate,
     save,
     saveNow,
@@ -186,5 +223,7 @@ export const useSettingsStore = defineStore("settings", () => {
     pickGallery,
     clearBackground,
     clearGallery,
+    checkLauncherUpdate,
+    openLauncherUpdate,
   };
 });

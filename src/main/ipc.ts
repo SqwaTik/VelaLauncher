@@ -39,6 +39,7 @@ import * as modrinth from "./services/modrinth";
 import * as appearance from "./services/appearance";
 import { contentSummary, listScreenshots } from "./services/content";
 import { setDiscordActivity, syncDiscordSetting } from "./services/discord";
+import { checkLauncherUpdate } from "./services/launcher-update";
 
 async function readImageDataUrl(path: string): Promise<string> {
   const bytes = await fs.readFile(path);
@@ -76,6 +77,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.openExternal, (_e, url: string) =>
     shell.openExternal(url),
   );
+  ipcMain.handle(IPC.appCheckUpdate, () => checkLauncherUpdate());
   ipcMain.handle(IPC.pickFolder, async () => {
     const w = getWindow();
     if (!w) return null;
@@ -209,6 +211,19 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       filters: [{ name: "Minecraft skin", extensions: ["png"] }],
     });
     return result.canceled ? null : readImageDataUrl(result.filePaths[0]);
+  });
+  ipcMain.handle(IPC.appearancePickCape, async () => {
+    const window = getWindow();
+    if (!window) return null;
+    const result = await dialog.showOpenDialog(window, {
+      properties: ["openFile"],
+      filters: [{ name: "Minecraft cape", extensions: ["png"] }],
+    });
+    if (result.canceled) return null;
+    const bytes = await fs.readFile(result.filePaths[0]);
+    if (bytes.length > 5 * 1024 * 1024)
+      throw new Error("Плащ слишком большой (максимум 5 МБ).");
+    return `data:image/png;base64,${bytes.toString("base64")}`;
   });
   ipcMain.handle(IPC.appearanceExportSkin, async (_event, dataUrl: string) => {
     const window = getWindow();

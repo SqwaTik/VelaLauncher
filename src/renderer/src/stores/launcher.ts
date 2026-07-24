@@ -24,7 +24,7 @@ function userFacingError(error: unknown): string {
     .trim();
   if (!cleaned || /^aggregate\s*error$/i.test(cleaned))
     return "Не удалось подключиться к серверу загрузки. Проверьте интернет и повторите попытку.";
-  return cleaned;
+  return cleaned.length > 280 ? `${cleaned.slice(0, 277)}…` : cleaned;
 }
 
 /**
@@ -43,6 +43,7 @@ export const useLauncherStore = defineStore("launcher", () => {
   const updateError = ref("");
   const updateCheckedAt = ref<number | null>(null);
   const crash = ref<LaunchStatus | null>(null);
+  const transportBusy = ref(false);
 
   const playtimeMinutes = ref(0);
   const lastPlayed = ref<number | null>(null);
@@ -96,7 +97,7 @@ export const useLauncherStore = defineStore("launcher", () => {
         statusText.value = "";
         errorText.value = "";
       } else if (p.phase === "error") {
-        errorText.value = p.detail || p.message;
+        errorText.value = userFacingError(p.detail || p.message);
         state.value = s.stats.installed ? "installed" : "not-installed";
       } else if (p.phase === "done") {
         state.value = "installed";
@@ -140,7 +141,7 @@ export const useLauncherStore = defineStore("launcher", () => {
         case "error":
           state.value = "installed";
           statusText.value = "";
-          errorText.value = st.message || "Ошибка запуска";
+          errorText.value = userFacingError(st.message || "Ошибка запуска");
           break;
       }
     });
@@ -168,13 +169,45 @@ export const useLauncherStore = defineStore("launcher", () => {
   }
 
   async function pause(): Promise<void> {
-    if (state.value !== "downloading") return;
-    await window.royale.game.pause();
+    if (state.value !== "downloading" || transportBusy.value) return;
+    transportBusy.value = true;
+    state.value = "paused";
+    statusText.value = "Приостанавливаем загрузку…";
+    try {
+      if (await window.royale.game.pause()) {
+        state.value = "paused";
+        statusText.value = "Загрузка приостановлена";
+      } else {
+        state.value = "downloading";
+        statusText.value = "Загрузка продолжается";
+      }
+    } catch (cause) {
+      state.value = "downloading";
+      errorText.value = userFacingError(cause);
+    } finally {
+      transportBusy.value = false;
+    }
   }
 
   async function resume(): Promise<void> {
-    if (state.value !== "paused") return;
-    if (await window.royale.game.resume()) state.value = "downloading";
+    if (state.value !== "paused" || transportBusy.value) return;
+    transportBusy.value = true;
+    state.value = "downloading";
+    statusText.value = "Продолжаем загрузку…";
+    try {
+      if (await window.royale.game.resume()) {
+        state.value = "downloading";
+        statusText.value = "Загрузка продолжена";
+      } else {
+        state.value = "paused";
+        statusText.value = "Загрузка приостановлена";
+      }
+    } catch (cause) {
+      state.value = "paused";
+      errorText.value = userFacingError(cause);
+    } finally {
+      transportBusy.value = false;
+    }
   }
 
   async function cancel(): Promise<void> {
@@ -237,6 +270,7 @@ export const useLauncherStore = defineStore("launcher", () => {
     updateError,
     updateCheckedAt,
     crash,
+    transportBusy,
     version,
     isInstalled,
     playtimeMinutes,

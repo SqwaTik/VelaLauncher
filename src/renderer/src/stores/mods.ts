@@ -2,6 +2,16 @@ import { defineStore } from "pinia";
 import { ref } from "vue";
 import type { ModProject, InstalledMod } from "@shared/types";
 
+function cleanError(error: unknown): string {
+  const value = (error instanceof Error ? error.message : String(error))
+    .replace(/^Error invoking remote method '[^']+':\s*/i, "")
+    .replace(/^Error:\s*/i, "")
+    .trim();
+  if (!value || /^aggregate\s*error$/i.test(value))
+    return "Не удалось подключиться к Modrinth. Проверьте интернет и повторите попытку.";
+  return value.length > 260 ? `${value.slice(0, 257)}…` : value;
+}
+
 /** Modrinth browse + install state, all backed by the main-process service. */
 export const useModsStore = defineStore("mods", () => {
   const results = ref<ModProject[]>([]);
@@ -49,7 +59,7 @@ export const useModsStore = defineStore("mods", () => {
       totalHits.value = res.total_hits;
       offset.value = res.offset;
     } catch (e) {
-      error.value = e instanceof Error ? e.message : String(e);
+      error.value = cleanError(e);
     } finally {
       loading.value = false;
     }
@@ -100,9 +110,7 @@ export const useModsStore = defineStore("mods", () => {
       // banner only repeats the same information and shifts the catalogue.
       notice.value = "";
     } catch (e) {
-      error.value = (e instanceof Error ? e.message : String(e))
-        .replace(/^Error invoking remote method '[^']+':\s*/i, "")
-        .replace(/^Error:\s*/i, "");
+      error.value = cleanError(e);
     } finally {
       const s = new Set(busy.value);
       s.delete(project.project_id);

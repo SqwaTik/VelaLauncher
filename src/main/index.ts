@@ -21,6 +21,10 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 let mainWindow: BrowserWindow | null = null;
+if (process.platform === "win32") {
+  app.setAppUserModelId("io.royale.launcher");
+  app.setName("Royale Launcher");
+}
 
 const mediaTypes: Record<string, string> = {
   ".mp4": "video/mp4",
