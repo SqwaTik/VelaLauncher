@@ -185,6 +185,14 @@ export interface LauncherUpdateInfo {
   publishedAt: string | null;
 }
 
+export interface LauncherUpdateProgress {
+  phase: "downloading" | "installing" | "error";
+  progress: number;
+  downloadedBytes: number;
+  totalBytes: number;
+  message: string;
+}
+
 export interface GameContentSummary {
   mods: number;
   resourcePacks: number;

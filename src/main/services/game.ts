@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { promises as fs, existsSync } from "fs";
+import { createWriteStream, promises as fs, existsSync } from "fs";
 import { dirname, join } from "path";
 import { totalmem } from "os";
 import { exec, spawn, type ChildProcess } from "child_process";
@@ -12,11 +12,16 @@ import {
   launch,
   createMinecraftProcessWatcher,
   LaunchPrecheck,
+  type ResolvedLibrary,
   type ResolvedVersion,
 } from "@xmcl/core";
 import {
   DownloadTask,
   installTask,
+  installVersionTask,
+  installResolvedLibrariesTask,
+  installResolvedAssetsTask,
+  installAssetsTask,
   getVersionList,
   getFabricLoaderArtifact,
   installFabricByLoaderArtifact,
@@ -38,6 +43,10 @@ import { setDiscordActivity } from "./discord";
 const execAsync = promisify(exec);
 const USER_AGENT = "SqwaTik/RoyaleLauncher";
 const FABRIC_API_PROJECT = "P7dR8mSH";
+const pendingGameLogs = new WeakMap<
+  BrowserWindow,
+  Array<{ text: string; kind: string }>
+>();
 
 let currentTask: Task<unknown> | null = null;
 let buildProcess: ChildProcess | null = null;
@@ -53,6 +62,66 @@ function emitProgress(progress: InstallProgress): void {
 function emitLaunch(status: LaunchStatus): void {
   for (const window of BrowserWindow.getAllWindows())
     window.webContents.send(IPC.gameLaunchStatus, status);
+}
+
+function createGameLogWindow(): BrowserWindow {
+  const window = new BrowserWindow({
+    width: 900,
+    height: 540,
+    minWidth: 640,
+    minHeight: 360,
+    show: false,
+    autoHideMenuBar: true,
+    backgroundColor: "#08110b",
+    title: "Royale Launcher — журнал Minecraft",
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  const html = `<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>Журнал Minecraft</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;height:100%;background:#08110b;color:#d7e0d9;font:13px/1.55 "Cascadia Mono",Consolas,monospace}
+header{position:sticky;top:0;display:flex;align-items:center;gap:10px;height:48px;padding:0 18px;background:#0d1710eF;border-bottom:1px solid #263329;backdrop-filter:blur(14px)}
+header i{width:8px;height:8px;border-radius:50%;background:#56c66f;box-shadow:0 0 14px #56c66f}header b{font:600 13px/1 system-ui;color:#f4f7f4}
+pre{min-height:calc(100% - 48px);margin:0;padding:16px 18px 28px;white-space:pre-wrap;overflow-wrap:anywhere}
+.stderr{color:#ff9b9b}.system{color:#78d58d}
+</style></head><body><header><i></i><b>Royale Master · журнал запуска</b></header><pre id="log"><span class="system">Подготовка процесса Minecraft…</span>\n</pre>
+<script>
+window.appendRoyaleLog=(text,kind)=>{const log=document.getElementById("log");const line=document.createElement("span");line.className=kind||"";line.textContent=text;log.appendChild(line);window.scrollTo({top:document.body.scrollHeight,behavior:"instant"})}
+</script></body></html>`;
+  pendingGameLogs.set(window, []);
+  void window.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(html)}`,
+  );
+  window.webContents.once("did-finish-load", () => {
+    const pending = pendingGameLogs.get(window) ?? [];
+    pendingGameLogs.delete(window);
+    for (const entry of pending) appendGameLog(window, entry.text, entry.kind);
+  });
+  window.once("ready-to-show", () => window.show());
+  return window;
+}
+
+function appendGameLog(
+  window: BrowserWindow | null,
+  text: string,
+  kind = "",
+): void {
+  if (!window || window.isDestroyed()) return;
+  const pending = pendingGameLogs.get(window);
+  if (pending) {
+    pending.push({ text, kind });
+    return;
+  }
+  void window.webContents
+    .executeJavaScript(
+      `window.appendRoyaleLog?.(${JSON.stringify(text)},${JSON.stringify(kind)})`,
+      true,
+    )
+    .catch(() => undefined);
 }
 
 function report(
@@ -410,24 +479,38 @@ async function installRoyaleClient(
     cacheRoot,
     `royale-client-${remote.update.remoteCommitSha}.jar`,
   );
+  const cachedSize = await fs
+    .stat(staged)
+    .then((stat) => stat.size)
+    .catch(() => 0);
 
-  if (remote.asset) {
-    await runDownload(
-      remote.asset.url,
-      staged,
-      "royale",
-      0.78,
-      0.15,
-      "Загрузка Royale Master",
-      remote.asset.name,
-    );
+  if (cachedSize < 1024) {
+    if (remote.asset) {
+      await runDownload(
+        remote.asset.url,
+        staged,
+        "royale",
+        0.78,
+        0.15,
+        "Загрузка Royale Master",
+        remote.asset.name,
+      );
+    } else {
+      const built = await buildRoyaleClient(
+        remote.update.remoteCommitSha,
+        javaPath,
+        cacheRoot,
+      );
+      await fs.copyFile(built, staged);
+    }
   } else {
-    const built = await buildRoyaleClient(
-      remote.update.remoteCommitSha,
-      javaPath,
-      cacheRoot,
+    report(
+      "royale",
+      0.92,
+      "Royale Master готов",
+      "Используем проверенный локальный кэш",
+      { canPause: false },
     );
-    await fs.copyFile(built, staged);
   }
 
   if ((await fs.stat(staged)).size < 1024)
@@ -469,7 +552,6 @@ async function installRoyaleClient(
     installedCommitSha: remote.update.remoteCommitSha,
     installedClientVersion: remote.update.remoteVersion,
   });
-  await fs.rm(staged, { force: true });
 }
 
 export async function pauseInstall(): Promise<boolean> {
@@ -744,6 +826,153 @@ async function ensureAuthlibInjector(storagePath: string): Promise<string> {
   return jar;
 }
 
+function librariesFromLaunchError(error: unknown): ResolvedLibrary[] | null {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "error" in error &&
+    error.error === "MissingLibraries" &&
+    "libraries" in error &&
+    Array.isArray(error.libraries)
+  ) {
+    return error.libraries as ResolvedLibrary[];
+  }
+  return null;
+}
+
+async function repairLaunchFiles(
+  folder: MinecraftFolder,
+  versionId: string,
+  initial: ResolvedVersion,
+  quickLaunch: boolean,
+): Promise<ResolvedVersion> {
+  let resolved = initial;
+  let versionBroken = !existsSync(
+    folder.getVersionJar(resolved.minecraftVersion),
+  );
+  if (!quickLaunch && !versionBroken) {
+    try {
+      await LaunchPrecheck.checkVersion(
+        folder,
+        resolved,
+        {} as Parameters<typeof LaunchPrecheck.checkVersion>[2],
+      );
+    } catch {
+      versionBroken = true;
+    }
+  }
+  if (versionBroken) {
+    emitLaunch({
+      state: "launching",
+      message: "Восстанавливаем файлы Minecraft",
+    });
+    const list = await getVersionList();
+    const metadata = list.versions.find(
+      (entry) => entry.id === resolved.minecraftVersion,
+    );
+    if (!metadata)
+      throw new Error(
+        `Не удалось найти Minecraft ${resolved.minecraftVersion} для восстановления.`,
+      );
+    await installVersionTask(metadata, folder).startAndWait();
+    resolved = await Version.parse(folder, versionId);
+  }
+
+  let missingLibraries: ResolvedLibrary[] = [];
+  if (quickLaunch) {
+    missingLibraries = resolved.libraries.filter(
+      (library) => !existsSync(folder.getLibraryByPath(library.download.path)),
+    );
+  } else {
+    try {
+      await LaunchPrecheck.checkLibraries(
+        folder,
+        resolved,
+        {} as Parameters<typeof LaunchPrecheck.checkLibraries>[2],
+      );
+    } catch (error) {
+      const libraries = librariesFromLaunchError(error);
+      if (!libraries) throw error;
+      missingLibraries = libraries;
+    }
+  }
+  if (missingLibraries.length) {
+    emitLaunch({
+      state: "launching",
+      message: `Докачиваем ${missingLibraries.length} библиотек`,
+    });
+    await installResolvedLibrariesTask(missingLibraries, folder, {
+      librariesDownloadConcurrency: 8,
+    }).startAndWait();
+  }
+
+  if (!quickLaunch) {
+    const indexCandidates = [
+      folder.getAssetsIndex(resolved.assets),
+      resolved.assetIndex?.sha1
+        ? folder.getAssetsIndex(resolved.assetIndex.sha1)
+        : "",
+    ].filter(Boolean);
+    let index:
+      | {
+          objects?: Record<string, { hash: string; size: number }>;
+        }
+      | undefined;
+    for (const candidate of indexCandidates) {
+      try {
+        index = JSON.parse(
+          await fs.readFile(candidate, "utf8"),
+        ) as typeof index;
+        break;
+      } catch {
+        /* try the next supported asset-index name */
+      }
+    }
+    if (!index?.objects) {
+      emitLaunch({
+        state: "launching",
+        message: "Восстанавливаем ассеты Minecraft",
+      });
+      await installAssetsTask(resolved, {
+        assetsDownloadConcurrency: 16,
+        prevalidSizeOnly: true,
+      }).startAndWait();
+    } else {
+      const unique = new Map<
+        string,
+        { name: string; hash: string; size: number }
+      >();
+      for (const [name, asset] of Object.entries(index.objects)) {
+        if (!unique.has(asset.hash)) unique.set(asset.hash, { name, ...asset });
+      }
+      const missing = (
+        await Promise.all(
+          [...unique.values()].map(async (asset) => {
+            const size = await fs
+              .stat(folder.getAsset(asset.hash))
+              .then((stat) => stat.size)
+              .catch(() => -1);
+            return size === asset.size ? null : asset;
+          }),
+        )
+      ).filter((asset): asset is { name: string; hash: string; size: number } =>
+        Boolean(asset),
+      );
+      if (missing.length) {
+        emitLaunch({
+          state: "launching",
+          message: `Докачиваем ${missing.length} файлов игры`,
+        });
+        await installResolvedAssetsTask(missing, folder, {
+          assetsDownloadConcurrency: 16,
+          prevalidSizeOnly: true,
+        }).startAndWait();
+      }
+    }
+  }
+  return Version.parse(folder, versionId);
+}
+
 export async function launchGame(account: StoredAccount): Promise<void> {
   const state = await loadState();
   const dir = state.settings.storagePath;
@@ -781,7 +1010,14 @@ export async function launchGame(account: StoredAccount): Promise<void> {
         env: environmentFromText(state.settings.environmentVariables),
       });
     }
-    const resolved = await Version.parse(folder, id);
+    let resolved = await Version.parse(folder, id);
+    emitLaunch({ state: "launching", message: "Проверяем файлы игры" });
+    resolved = await repairLaunchFiles(
+      folder,
+      id,
+      resolved,
+      state.settings.quickLaunch,
+    );
     const automaticMax = Math.min(
       8192,
       Math.max(
@@ -807,6 +1043,7 @@ export async function launchGame(account: StoredAccount): Promise<void> {
     const environment = environmentFromText(
       state.settings.environmentVariables,
     );
+    if (state.settings.devMode) environment.ROYALE_LAUNCHER_DEV_MODE = "1";
     if (state.settings.gpuDedicated && state.settings.gpuProfile !== "power") {
       environment.SHIM_MCCOMPAT = "0x800000001";
       environment.__NV_PRIME_RENDER_OFFLOAD = "1";
@@ -828,6 +1065,9 @@ export async function launchGame(account: StoredAccount): Promise<void> {
         ? [LaunchPrecheck.checkVersion, LaunchPrecheck.checkLibraries]
         : undefined;
 
+    const developerJvmArgs = state.settings.devMode
+      ? ["-Droyale.launcher.devMode=true"]
+      : [];
     const process = await launch({
       gamePath: dir,
       resourcePath: dir,
@@ -835,7 +1075,7 @@ export async function launchGame(account: StoredAccount): Promise<void> {
       version: resolved,
       minMemory,
       maxMemory,
-      extraJVMArgs: splitArgs(state.settings.jvmArgs),
+      extraJVMArgs: [...splitArgs(state.settings.jvmArgs), ...developerJvmArgs],
       extraMCArgs: splitArgs(state.settings.minecraftArgs),
       extraExecOption: { env: environment, windowsHide: true },
       prechecks,
@@ -854,14 +1094,52 @@ export async function launchGame(account: StoredAccount): Promise<void> {
     });
 
     const watcher = createMinecraftProcessWatcher(process);
-    emitLaunch({ state: "running", message: "Игра запущена" });
-    await setDiscordActivity({
-      details: "Играет в Royale Master",
-      state: account.username,
-      startedAt: Date.now(),
-    });
-    if (state.settings.closeOnLaunch) BrowserWindow.getAllWindows()[0]?.hide();
+    const launcherWindow = BrowserWindow.getAllWindows()[0];
+    const logWindow = state.settings.showLog ? createGameLogWindow() : null;
+    let logStream: ReturnType<typeof createWriteStream> | null = null;
+    if (state.settings.devMode) {
+      const logDirectory = join(dir, "logs");
+      await fs.mkdir(logDirectory, { recursive: true });
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      logStream = createWriteStream(
+        join(logDirectory, `royale-launch-${timestamp}.log`),
+        { flags: "a" },
+      );
+      logStream.write(
+        `[Royale Launcher] Minecraft ${GAME.minecraftVersion}, PID ${process.pid ?? "unknown"}\n`,
+      );
+    }
+    const pipeLog = (
+      chunk: Buffer | string,
+      kind: "stdout" | "stderr",
+    ): void => {
+      const text = chunk.toString();
+      logStream?.write(`[${kind}] ${text}`);
+      appendGameLog(logWindow, text, kind === "stderr" ? "stderr" : "");
+    };
+    process.stdout?.on("data", (chunk: Buffer | string) =>
+      pipeLog(chunk, "stdout"),
+    );
+    process.stderr?.on("data", (chunk: Buffer | string) =>
+      pipeLog(chunk, "stderr"),
+    );
+    let minecraftWindowReady = false;
+    let launcherHidden = false;
     const started = Date.now();
+    watcher.once("minecraft-window-ready", () => {
+      if (minecraftWindowReady) return;
+      minecraftWindowReady = true;
+      emitLaunch({ state: "running", message: "Игра запущена" });
+      void setDiscordActivity({
+        details: "Играет в Royale Master",
+        state: account.username,
+        startedAt: Date.now(),
+      });
+      if (state.settings.closeOnLaunch && launcherWindow) {
+        launcherHidden = true;
+        launcherWindow.hide();
+      }
+    });
     watcher.on("error", (error) =>
       emitLaunch({
         state: "error",
@@ -871,6 +1149,14 @@ export async function launchGame(account: StoredAccount): Promise<void> {
     watcher.on(
       "minecraft-exit",
       ({ code, crashReport, crashReportLocation }) => {
+        logStream?.end(
+          `\n[Royale Launcher] Процесс завершён с кодом ${code ?? 0}.\n`,
+        );
+        appendGameLog(
+          logWindow,
+          `\nПроцесс Minecraft завершён с кодом ${code ?? 0}.\n`,
+          "system",
+        );
         const minutes = Math.max(
           0,
           Math.round((Date.now() - started) / 60_000),
@@ -879,7 +1165,10 @@ export async function launchGame(account: StoredAccount): Promise<void> {
           lastPlayed: Date.now(),
           playtimeMinutes: state.stats.playtimeMinutes + minutes,
         });
-        BrowserWindow.getAllWindows()[0]?.show();
+        if (launcherWindow && (launcherHidden || !launcherWindow.isVisible())) {
+          launcherWindow.show();
+          launcherWindow.focus();
+        }
         void setDiscordActivity({ details: "В главном меню" });
         emitLaunch(
           crashReport

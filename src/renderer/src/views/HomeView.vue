@@ -7,6 +7,8 @@ import { GAME } from "@shared/constants";
 import { useLauncherStore } from "@/stores/launcher";
 import { useAccountStore } from "@/stores/account";
 import { useSettingsStore } from "@/stores/settings";
+import { useModsStore } from "@/stores/mods";
+import { useResourcesStore } from "@/stores/resources";
 import generatedLogo from "@/assets/images/royale-logo-transparent.png";
 import { useLocale } from "@/composables/useLocale";
 
@@ -14,6 +16,8 @@ const router = useRouter();
 const launcher = useLauncherStore();
 const account = useAccountStore();
 const settings = useSettingsStore();
+const mods = useModsStore();
+const resources = useResourcesStore();
 const { tr } = useLocale();
 const slide = ref(0);
 const galleryHovered = ref(false);
@@ -37,6 +41,8 @@ const busy = computed(
 );
 const gallery = computed(() => settings.screenshotUrls);
 const currentSlide = computed(() => gallery.value[slide.value] ?? null);
+const modPreview = computed(() => mods.installed.slice(0, 4));
+const resourcePreview = computed(() => resources.installed.slice(0, 4));
 const logoStyle = computed(() => ({
   transform: `rotateX(${logoPitch.value}deg) rotateY(${logoYaw.value}deg)`,
 }));
@@ -47,13 +53,16 @@ const actionLabel = computed(() => {
     launcher.state === "downloading" &&
     launcher.installProgress?.canPause === false
   )
-    return launcher.installProgress?.phase === "build"
-      ? tr("Сборка клиента…", "Building client…", "Compilando cliente…")
-      : `${Math.floor(launcher.progress)}%`;
+    return (
+      launcher.statusText ||
+      tr("Подготовка файлов…", "Preparing files…", "Preparando archivos…")
+    );
   if (launcher.state === "not-installed")
     return tr("Установить", "Install", "Instalar");
   if (launcher.state === "downloading")
-    return `${tr("Пауза", "Pause", "Pausa")} · ${Math.floor(launcher.progress)}%`;
+    return (
+      launcher.statusText || tr("Загрузка…", "Downloading…", "Descargando…")
+    );
   if (launcher.state === "launching" || account.refreshing)
     return tr("Подготовка…", "Preparing…", "Preparando…");
   if (launcher.state === "running")
@@ -79,62 +88,19 @@ const actionIcon = computed(() =>
             ? "user"
             : "play",
 );
-const operationTitle = computed(() => {
-  if (launcher.state === "paused")
-    return tr(
-      "Установка приостановлена",
-      "Installation paused",
-      "Instalación en pausa",
-    );
-  if (launcher.state === "downloading")
-    return tr(
-      "Устанавливаем Royale Master",
-      "Installing Royale Master",
-      "Instalando Royale Master",
-    );
+const actionSecondary = computed(() => {
+  if (["downloading", "paused"].includes(launcher.state)) {
+    const parts = [`${Math.floor(launcher.progress)}%`];
+    if (launcher.installProgress?.bytesPerSecond)
+      parts.push(`${formatBytes(launcher.installProgress.bytesPerSecond)}/с`);
+    return parts.join(" · ");
+  }
   if (launcher.state === "launching" || account.refreshing)
-    return tr(
-      "Подготавливаем запуск",
-      "Preparing launch",
-      "Preparando el inicio",
-    );
-  if (launcher.state === "running")
-    return tr(
-      "Minecraft запущен",
-      "Minecraft is running",
-      "Minecraft está iniciado",
-    );
+    return launcher.statusText;
   if (launcher.updateInfo?.available)
-    return tr(
-      "Доступно обновление",
-      "Update available",
-      "Actualización disponible",
-    );
-  if (launcher.isInstalled)
-    return tr("Готово к запуску", "Ready to play", "Listo para jugar");
-  return tr(
-    "Требуется установка",
-    "Installation required",
-    "Instalación necesaria",
-  );
+    return `Royale Master ${launcher.updateInfo.remoteVersion}`;
+  return "";
 });
-const operationDetail = computed(
-  () =>
-    launcher.statusText ||
-    (launcher.updateInfo?.available
-      ? tr(
-          "Новая версия Royale Master готова к загрузке",
-          "A new Royale Master version is ready",
-          "Hay una nueva versión de Royale Master",
-        )
-      : launcher.isInstalled
-        ? `Royale ${GAME.clientVersion}`
-        : tr(
-            "Minecraft, Fabric и Java будут подготовлены автоматически",
-            "Minecraft, Fabric and Java will be prepared automatically",
-            "Minecraft, Fabric y Java se prepararán automáticamente",
-          )),
-);
 
 function launch(): void {
   if (launcher.state === "downloading") void launcher.pause();
@@ -213,6 +179,7 @@ function russianCount(
 }
 onMounted(() => {
   void settings.refreshGameContent();
+  void Promise.allSettled([mods.loadInstalled(), resources.loadInstalled()]);
   void window.royale.discord.activity("В главном меню");
   carouselTimer = setInterval(() => {
     if (!galleryHovered.value) moveSlide(1);
@@ -235,32 +202,36 @@ onBeforeUnmount(() => {
   <div class="home">
     <RouterLink to="/account" class="profile-chip">
       <span class="avatar"
-        ><img v-if="account.active" :src="account.avatar" alt="" /><Icon
-          v-else
-          name="user"
-          :size="19"
+        ><img
+          v-if="account.active && !settings.settings?.streamerMode"
+          :src="account.avatar"
+          alt="" /><Icon v-else name="user" :size="19"
       /></span>
       <span class="profile-copy"
         ><b>{{
-          account.active?.username ||
-          tr("Добавить аккаунт", "Add account", "Añadir cuenta")
+          settings.settings?.streamerMode && account.active
+            ? tr("Профиль скрыт", "Profile hidden", "Perfil oculto")
+            : account.active?.username ||
+              tr("Добавить аккаунт", "Add account", "Añadir cuenta")
         }}</b
         ><small>{{
-          account.active?.type === "ely"
-            ? "Ely.by"
-            : account.active?.type === "littleskin"
-              ? "LittleSkin"
-              : account.active
-                ? tr(
-                    "Автономный профиль",
-                    "Offline profile",
-                    "Perfil sin conexión",
-                  )
-                : tr(
-                    "Профиль не выбран",
-                    "No profile selected",
-                    "Perfil no seleccionado",
-                  )
+          settings.settings?.streamerMode && account.active
+            ? tr("Режим стримера", "Streamer mode", "Modo streamer")
+            : account.active?.type === "ely"
+              ? "Ely.by"
+              : account.active?.type === "littleskin"
+                ? "LittleSkin"
+                : account.active
+                  ? tr(
+                      "Автономный профиль",
+                      "Offline profile",
+                      "Perfil sin conexión",
+                    )
+                  : tr(
+                      "Профиль не выбран",
+                      "No profile selected",
+                      "Perfil no seleccionado",
+                    )
         }}</small></span
       ><Icon name="chevron" :size="15" />
     </RouterLink>
@@ -354,15 +325,19 @@ onBeforeUnmount(() => {
             )
           }}</span>
         </div>
-        <p>
-          {{
-            tr(
-              "Установленные модификации сборки",
-              "Installed modifications",
-              "Modificaciones instaladas",
-            )
-          }}
-        </p>
+        <div class="content-icons" aria-label="Установленные моды">
+          <span
+            v-for="item in modPreview"
+            :key="item.filename"
+            :title="item.title || item.filename"
+          >
+            <img v-if="item.iconUrl" :src="item.iconUrl" alt="" />
+            <Icon v-else name="mods" :size="13" />
+          </span>
+          <b v-if="settings.content.mods > modPreview.length">
+            +{{ settings.content.mods - modPreview.length }}
+          </b>
+        </div>
       </article>
 
       <article class="dashboard-card worlds-card">
@@ -435,15 +410,19 @@ onBeforeUnmount(() => {
             ).replace(/^\d+\s/, "")
           }}</span>
         </div>
-        <p>
-          {{
-            tr(
-              "Наборы ресурсов Minecraft",
-              "Minecraft resource packs",
-              "Paquetes de recursos",
-            )
-          }}
-        </p>
+        <div class="content-icons" aria-label="Установленные ресурспаки">
+          <span
+            v-for="item in resourcePreview"
+            :key="item.filename"
+            :title="item.title || item.filename"
+          >
+            <img v-if="item.iconUrl" :src="item.iconUrl" alt="" />
+            <Icon v-else name="palette" :size="13" />
+          </span>
+          <b v-if="settings.content.resourcePacks > resourcePreview.length">
+            +{{ settings.content.resourcePacks - resourcePreview.length }}
+          </b>
+        </div>
       </article>
 
       <article class="dashboard-card screenshots-card">
@@ -576,38 +555,6 @@ onBeforeUnmount(() => {
         >
       </div>
       <div class="launch-zone">
-        <div class="operation-status" :class="launcher.state">
-          <span class="operation-dot"
-            ><Icon
-              :name="
-                ['downloading', 'launching'].includes(launcher.state)
-                  ? 'spinner'
-                  : launcher.state === 'paused'
-                    ? 'play'
-                    : launcher.isInstalled
-                      ? 'check'
-                      : 'download'
-              "
-              :size="15"
-              :class="{
-                spin: ['downloading', 'launching'].includes(launcher.state),
-              }"
-          /></span>
-          <span
-            ><b>{{ operationTitle }}</b
-            ><small>{{ operationDetail }}</small></span
-          >
-          <span
-            v-if="launcher.installProgress?.bytesPerSecond"
-            class="download-metrics"
-          >
-            {{ formatBytes(launcher.installProgress.downloadedBytes)
-            }}<template v-if="launcher.installProgress.totalBytes">
-              / {{ formatBytes(launcher.installProgress.totalBytes) }}</template
-            >
-            · {{ formatBytes(launcher.installProgress.bytesPerSecond) }}/с
-          </span>
-        </div>
         <div
           class="launch-pill"
           :class="{
@@ -639,7 +586,10 @@ onBeforeUnmount(() => {
                     (launcher.state === 'downloading' &&
                       launcher.installProgress?.canPause === false),
                 }" /></span
-            ><b>{{ actionLabel }}</b>
+            ><span class="launch-action-copy"
+              ><b>{{ actionLabel }}</b
+              ><small v-if="actionSecondary">{{ actionSecondary }}</small></span
+            >
           </button>
           <button
             class="launch-settings"
@@ -761,7 +711,7 @@ onBeforeUnmount(() => {
   font-size: 10.5px;
 }
 .instance {
-  margin-top: clamp(34px, 7vh, 74px);
+  margin-top: clamp(6px, 1.8vh, 18px);
   max-width: 760px;
 }
 .instance h1 {
@@ -1158,56 +1108,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 9px;
-}
-.operation-status {
-  width: 100%;
-  min-height: 48px;
-  padding: 8px 10px;
-  display: grid;
-  grid-template-columns: 30px minmax(0, 1fr);
-  align-items: center;
-  gap: 9px;
-  border-radius: 12px;
-  color: var(--text-1);
-  background: rgba(12, 18, 14, 0.86);
-  border: 1px solid var(--hairline);
-  box-shadow: 0 12px 30px #0004;
-  backdrop-filter: blur(18px);
-}
-.operation-status.downloading,
-.operation-status.paused,
-.operation-status.launching {
-  border-color: var(--green-line);
-  background: rgba(16, 32, 21, 0.94);
-}
-.operation-dot {
-  width: 30px;
-  height: 30px;
-  display: grid;
-  place-items: center;
-  border-radius: 9px;
-  color: var(--green-bright);
-  background: var(--green-soft);
-}
-.operation-status > span:nth-child(2) {
-  min-width: 0;
-}
-.operation-status b,
-.operation-status small {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.operation-status b {
-  color: var(--text-0);
-  font-size: 11px;
-}
-.operation-status small {
-  margin-top: 2px;
-  color: var(--text-3);
-  font-size: 9px;
+  gap: 0;
 }
 .quick-links {
   display: flex;
@@ -1249,11 +1150,6 @@ onBeforeUnmount(() => {
 .build-state.ok i {
   background: var(--green);
   box-shadow: 0 0 8px rgba(83, 195, 106, 0.6);
-}
-.download-metrics {
-  grid-column: 2;
-  color: var(--green-bright);
-  font: 9px var(--font-num);
 }
 .launch-pill {
   position: relative;
@@ -1373,6 +1269,22 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.launch-action-copy {
+  min-width: 0;
+  text-align: center;
+}
+.launch-action-copy b,
+.launch-action-copy small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.launch-action-copy small {
+  margin-top: 2px;
+  font: 8px var(--font-num);
+  opacity: 0.64;
+}
 .progress {
   position: absolute;
   inset: 0 auto 0 0;
@@ -1402,7 +1314,7 @@ onBeforeUnmount(() => {
   z-index: 3;
   width: min(650px, calc(100vw - 420px));
   height: 222px;
-  margin-top: clamp(18px, 2.8vh, 28px);
+  margin-top: clamp(38px, 6.2vh, 66px);
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   grid-template-rows: repeat(2, minmax(0, 1fr));
@@ -1502,6 +1414,45 @@ onBeforeUnmount(() => {
 .dashboard-card > p {
   margin-top: 8px;
   line-height: 1.4;
+}
+.content-icons {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 14px;
+  display: flex;
+  align-items: center;
+  min-height: 30px;
+}
+.content-icons > span,
+.content-icons > b {
+  width: 29px;
+  height: 29px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  overflow: hidden;
+  margin-left: -7px;
+  border: 2px solid rgba(18, 22, 20, 0.98);
+  border-radius: 50%;
+  color: var(--green);
+  background: var(--surface-3);
+  box-shadow: 0 5px 12px #0005;
+}
+.content-icons > span:first-child {
+  margin-left: 0;
+}
+.content-icons img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.content-icons > b {
+  width: auto;
+  min-width: 29px;
+  padding: 0 7px;
+  color: var(--text-1);
+  font: 700 8px var(--font-num);
 }
 .screenshots-card > img,
 .screenshot-shade {
@@ -1795,9 +1746,6 @@ onBeforeUnmount(() => {
   .launch-zone {
     width: 100%;
     align-items: stretch;
-  }
-  .operation-status {
-    max-width: none;
   }
   .launch-pill {
     align-self: flex-end;

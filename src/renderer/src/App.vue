@@ -59,6 +59,7 @@ onMounted(async () => {
     await launcher.hydrate();
     mods.subscribe();
     void settings.detectJava();
+    void settings.checkLauncherUpdate();
   } finally {
     ready.value = true;
   }

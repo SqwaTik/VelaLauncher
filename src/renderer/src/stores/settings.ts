@@ -6,6 +6,7 @@ import type {
   InstallProgress,
   JavaInfo,
   LauncherUpdateInfo,
+  LauncherUpdateProgress,
   SystemMemoryInfo,
 } from "@shared/types";
 
@@ -28,6 +29,8 @@ export const useSettingsStore = defineStore("settings", () => {
   const launcherUpdate = ref<LauncherUpdateInfo | null>(null);
   const launcherUpdateChecking = ref(false);
   const launcherUpdateError = ref("");
+  const launcherUpdateProgress = ref<LauncherUpdateProgress | null>(null);
+  const launcherUpdateInstalling = ref(false);
   const screenshotPaths = ref<string[]>([]);
   const content = ref<GameContentSummary>({
     mods: 0,
@@ -186,15 +189,48 @@ export const useSettingsStore = defineStore("settings", () => {
     }
   }
 
-  async function openLauncherUpdate(): Promise<void> {
+  let updateSubscribed = false;
+  function subscribeLauncherUpdate(): void {
+    if (updateSubscribed) return;
+    updateSubscribed = true;
+    window.royale.app.onUpdateProgress((progress) => {
+      launcherUpdateProgress.value = progress;
+      launcherUpdateInstalling.value =
+        progress.phase === "downloading" || progress.phase === "installing";
+      if (progress.phase === "error")
+        launcherUpdateError.value = progress.message;
+    });
+  }
+
+  async function installLauncherUpdate(): Promise<void> {
     const update = launcherUpdate.value;
     if (!update?.available) {
       await checkLauncherUpdate();
       return;
     }
-    await window.royale.app.openExternal(
-      update.downloadUrl || update.releaseUrl,
-    );
+    if (launcherUpdateInstalling.value) return;
+    subscribeLauncherUpdate();
+    launcherUpdateError.value = "";
+    launcherUpdateProgress.value = {
+      phase: "downloading",
+      progress: 0,
+      downloadedBytes: 0,
+      totalBytes: 0,
+      message: "Подготавливаем обновление",
+    };
+    launcherUpdateInstalling.value = true;
+    try {
+      await window.royale.app.installUpdate();
+    } catch (cause) {
+      const raw = cause instanceof Error ? cause.message : String(cause);
+      launcherUpdateError.value =
+        raw
+          .replace(/^Error invoking remote method '[^']+':\s*/i, "")
+          .replace(/^Error:\s*/i, "")
+          .trim()
+          .slice(0, 220) || "Не удалось установить обновление.";
+      launcherUpdateInstalling.value = false;
+    }
   }
 
   return {
@@ -212,6 +248,8 @@ export const useSettingsStore = defineStore("settings", () => {
     launcherUpdate,
     launcherUpdateChecking,
     launcherUpdateError,
+    launcherUpdateProgress,
+    launcherUpdateInstalling,
     hydrate,
     save,
     saveNow,
@@ -224,6 +262,6 @@ export const useSettingsStore = defineStore("settings", () => {
     clearBackground,
     clearGallery,
     checkLauncherUpdate,
-    openLauncherUpdate,
+    installLauncherUpdate,
   };
 });

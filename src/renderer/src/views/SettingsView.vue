@@ -11,8 +11,9 @@ const { tr } = useLocale();
 const settings = computed(() => store.settings);
 const active = ref("appearance");
 const languageOpen = ref(false);
+const nativeLibrariesOpen = ref(false);
 const javaError = ref("");
-const launcherVersion = ref("0.1.0");
+const launcherVersion = ref("0.1.1");
 const languageLabel = computed(() =>
   settings.value?.language === "en"
     ? "English"
@@ -28,11 +29,42 @@ const launcherUpdateVersion = computed(() => {
     : `v${update.currentVersion}`;
 });
 const launcherUpdateAction = computed(() =>
-  store.launcherUpdate?.available
-    ? tr("Обновить", "Update", "Actualizar")
-    : store.launcherUpdate
-      ? tr("Актуально", "Up to date", "Actualizado")
-      : tr("Проверить", "Check", "Comprobar"),
+  store.launcherUpdateProgress?.phase === "installing"
+    ? tr("Установка…", "Installing…", "Instalando…")
+    : store.launcherUpdateInstalling
+      ? tr(
+          `Загрузка ${Math.floor(store.launcherUpdateProgress?.progress ?? 0)}%`,
+          `Downloading ${Math.floor(store.launcherUpdateProgress?.progress ?? 0)}%`,
+          `Descargando ${Math.floor(store.launcherUpdateProgress?.progress ?? 0)}%`,
+        )
+      : store.launcherUpdate?.available
+        ? tr("Обновить", "Update", "Actualizar")
+        : store.launcherUpdate
+          ? tr("Актуально", "Up to date", "Actualizado")
+          : tr("Проверить", "Check", "Comprobar"),
+);
+const nativeLibraryOptions = [
+  {
+    value: "never",
+    label: "Не заменять",
+    detail: "Использовать уже распакованные файлы",
+  },
+  {
+    value: "old-only",
+    label: "По необходимости",
+    detail: "Исправлять отсутствующие и повреждённые",
+  },
+  {
+    value: "always",
+    label: "Каждый запуск",
+    detail: "Распаковывать нативы заново",
+  },
+] as const;
+const nativeLibraryLabel = computed(
+  () =>
+    nativeLibraryOptions.find(
+      (option) => option.value === settings.value?.replaceNativeLibraries,
+    )?.label ?? "По необходимости",
 );
 
 const sections = [
@@ -163,6 +195,15 @@ function chooseLanguage(language: "ru" | "en" | "es"): void {
   languageOpen.value = false;
   save();
 }
+function chooseNativeLibraries(value: "never" | "old-only" | "always"): void {
+  if (!settings.value) return;
+  settings.value.replaceNativeLibraries = value;
+  nativeLibrariesOpen.value = false;
+  save();
+}
+function closeNativeLibraries(): void {
+  nativeLibrariesOpen.value = false;
+}
 
 onMounted(async () => {
   if (!store.settings) await store.hydrate();
@@ -172,6 +213,7 @@ onMounted(async () => {
     passive: true,
   });
   syncNavigation();
+  document.addEventListener("click", closeNativeLibraries);
   void window.royale.app
     .getVersion()
     .then((version) => (launcherVersion.value = version));
@@ -181,6 +223,7 @@ onBeforeUnmount(() => {
   if (unlockTimer) clearTimeout(unlockTimer);
   cancelAnimationFrame(scrollFrame);
   scrollRoot?.removeEventListener("scroll", syncNavigation);
+  document.removeEventListener("click", closeNativeLibraries);
 });
 </script>
 
@@ -494,15 +537,43 @@ onBeforeUnmount(() => {
               LWJGL.</small
             >
           </div>
-          <select
-            v-model="settings.replaceNativeLibraries"
-            class="control native-select"
-            @change="save"
+          <div
+            class="native-dropdown"
+            :class="{ open: nativeLibrariesOpen }"
+            @click.stop
           >
-            <option value="never">Не заменять</option>
-            <option value="old-only">По необходимости</option>
-            <option value="always">Каждый запуск</option>
-          </select>
+            <button
+              class="native-trigger"
+              @click="nativeLibrariesOpen = !nativeLibrariesOpen"
+            >
+              <span
+                ><b>{{ nativeLibraryLabel }}</b></span
+              >
+              <Icon name="chevron" :size="15" />
+            </button>
+            <Transition name="native-menu">
+              <div v-if="nativeLibrariesOpen" class="native-menu">
+                <button
+                  v-for="option in nativeLibraryOptions"
+                  :key="option.value"
+                  :class="{
+                    active: settings.replaceNativeLibraries === option.value,
+                  }"
+                  @click="chooseNativeLibraries(option.value)"
+                >
+                  <span
+                    ><b>{{ option.label }}</b
+                    ><small>{{ option.detail }}</small></span
+                  >
+                  <Icon
+                    v-if="settings.replaceNativeLibraries === option.value"
+                    name="check"
+                    :size="15"
+                  />
+                </button>
+              </div>
+            </Transition>
+          </div>
         </div>
       </section>
 
@@ -690,8 +761,11 @@ onBeforeUnmount(() => {
         <div class="setting-card compact">
           <div class="setting-icon"><Icon name="close" :size="18" /></div>
           <div class="setting-copy">
-            <b>Закрывать лаунчер после запуска</b
-            ><small>Освободить память после открытия Minecraft</small>
+            <b>Скрывать лаунчер во время игры</b
+            ><small
+              >Скрыть только после появления окна Minecraft и вернуть после
+              выхода.</small
+            >
           </div>
           <UiSwitch
             v-model="settings.closeOnLaunch"
@@ -723,18 +797,42 @@ onBeforeUnmount(() => {
           </div>
           <button
             class="btn launcher-update-button"
-            @click="store.openLauncherUpdate()"
+            :disabled="
+              store.launcherUpdateChecking || store.launcherUpdateInstalling
+            "
+            @click="store.installLauncherUpdate()"
           >
             <Icon
-              :name="store.launcherUpdateChecking ? 'spinner' : 'refresh'"
+              :name="
+                store.launcherUpdateChecking ||
+                store.launcherUpdateProgress?.phase === 'installing'
+                  ? 'spinner'
+                  : store.launcherUpdateInstalling
+                    ? 'download'
+                    : 'refresh'
+              "
               :size="15"
-              :class="{ spin: store.launcherUpdateChecking }"
+              :class="{
+                spin:
+                  store.launcherUpdateChecking ||
+                  store.launcherUpdateProgress?.phase === 'installing',
+              }"
             />
             <span
               ><small>{{ launcherUpdateVersion }}</small
               ><b>{{ launcherUpdateAction }}</b></span
             >
           </button>
+          <i
+            v-if="store.launcherUpdateInstalling"
+            class="launcher-update-progress"
+            :style="{
+              width: `${Math.max(
+                2,
+                store.launcherUpdateProgress?.progress ?? 0,
+              )}%`,
+            }"
+          />
         </div>
       </section>
     </main>
@@ -1121,13 +1219,118 @@ label small {
   resize: vertical;
   line-height: 1.4;
 }
-.native-select {
+.native-dropdown {
+  position: relative;
   width: 190px;
+  flex: none;
+}
+.native-trigger {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 11px 0 13px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 10px;
+  color: var(--text-1);
+  background: var(--surface-2);
+}
+.native-trigger svg {
+  color: var(--text-3);
+  transform: rotate(90deg);
+  transition: transform 0.2s var(--ease);
+}
+.native-dropdown.open .native-trigger {
+  border-color: var(--green-line);
+  background: var(--green-soft);
+}
+.native-dropdown.open .native-trigger svg {
+  color: var(--green);
+  transform: rotate(-90deg);
+}
+.native-menu {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 7px);
+  right: 0;
+  width: 260px;
+  padding: 6px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 12px;
+  background: rgba(13, 19, 15, 0.98);
+  box-shadow: 0 18px 48px #000a;
+  backdrop-filter: blur(18px);
+}
+.native-menu button {
+  width: 100%;
+  min-height: 50px;
+  padding: 8px 9px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-radius: 8px;
+  text-align: left;
+  color: var(--text-2);
+}
+.native-menu button:hover,
+.native-menu button.active {
+  color: var(--text-0);
+  background: var(--green-soft);
+}
+.native-menu button > span {
+  min-width: 0;
+}
+.native-menu b,
+.native-menu small {
+  display: block;
+}
+.native-menu b {
+  font-size: 10px;
+}
+.native-menu small {
+  margin-top: 3px;
+  color: var(--text-3);
+  font-size: 8px;
+}
+.native-menu svg {
+  flex: none;
+  color: var(--green);
+}
+.native-menu-enter-active,
+.native-menu-leave-active {
+  transition:
+    opacity 0.16s ease,
+    transform 0.18s var(--ease);
+  transform-origin: top right;
+}
+.native-menu-enter-from,
+.native-menu-leave-to {
+  opacity: 0;
+  transform: translateY(-5px) scale(0.97);
 }
 .update-card {
+  position: relative;
+  overflow: hidden;
   display: flex;
   align-items: center;
   gap: 10px;
+}
+.launcher-update-progress {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  border-radius: 0 4px 4px 0;
+  background: var(--green);
+  box-shadow: 0 0 12px rgba(87, 205, 112, 0.5);
+  transition: width 0.18s linear;
+}
+.launcher-update-button:disabled {
+  cursor: wait;
+  opacity: 0.78;
 }
 .launcher-update-button {
   min-width: 154px;

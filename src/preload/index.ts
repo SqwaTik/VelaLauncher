@@ -24,6 +24,7 @@ import type {
   LittleSkinLoginInput,
   InstalledResourcePack,
   LauncherUpdateInfo,
+  LauncherUpdateProgress,
 } from "../shared/types";
 
 /** Subscribe helper: returns an unsubscribe fn so callers can clean up. */
@@ -38,6 +39,11 @@ const api = {
     getVersion: (): Promise<string> => ipcRenderer.invoke(IPC.appGetVersion),
     checkUpdate: (): Promise<LauncherUpdateInfo> =>
       ipcRenderer.invoke(IPC.appCheckUpdate),
+    installUpdate: (): Promise<void> =>
+      ipcRenderer.invoke(IPC.appInstallUpdate),
+    onUpdateProgress: (
+      cb: (progress: LauncherUpdateProgress) => void,
+    ): (() => void) => on(IPC.appUpdateProgress, cb),
     openExternal: (url: string): Promise<void> =>
       ipcRenderer.invoke(IPC.openExternal, url),
     pickFolder: (): Promise<string | null> =>

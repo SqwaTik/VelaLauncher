@@ -37,7 +37,7 @@ export const GAME = {
   minecraftVersion: "1.21.11",
   yarnMappings: "1.21.11+build.4",
   fabricLoader: "0.18.4",
-  fabricApi: "0.141.2+1.21.11",
+  fabricApi: "0.141.5+1.21.11",
   javaMajor: 21,
   /** Royale client mod version. */
   clientVersion: "1.0.13",
@@ -52,6 +52,8 @@ export const IPC = {
   windowIsMaximized: "window:is-maximized",
   appGetVersion: "app:get-version",
   appCheckUpdate: "app:check-update",
+  appInstallUpdate: "app:install-update",
+  appUpdateProgress: "app:update-progress",
   openExternal: "app:open-external",
   pickFolder: "app:pick-folder",
   pickImage: "app:pick-image",

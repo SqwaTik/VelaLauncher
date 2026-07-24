@@ -39,7 +39,10 @@ import * as modrinth from "./services/modrinth";
 import * as appearance from "./services/appearance";
 import { contentSummary, listScreenshots } from "./services/content";
 import { setDiscordActivity, syncDiscordSetting } from "./services/discord";
-import { checkLauncherUpdate } from "./services/launcher-update";
+import {
+  checkLauncherUpdate,
+  installLauncherUpdate,
+} from "./services/launcher-update";
 
 async function readImageDataUrl(path: string): Promise<string> {
   const bytes = await fs.readFile(path);
@@ -78,6 +81,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     shell.openExternal(url),
   );
   ipcMain.handle(IPC.appCheckUpdate, () => checkLauncherUpdate());
+  ipcMain.handle(IPC.appInstallUpdate, () => installLauncherUpdate());
   ipcMain.handle(IPC.pickFolder, async () => {
     const w = getWindow();
     if (!w) return null;
