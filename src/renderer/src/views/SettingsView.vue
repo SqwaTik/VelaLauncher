@@ -13,7 +13,7 @@ const active = ref("appearance");
 const languageOpen = ref(false);
 const nativeLibrariesOpen = ref(false);
 const javaError = ref("");
-const launcherVersion = ref("0.1.1");
+const launcherVersion = ref("0.1.2");
 const languageLabel = computed(() =>
   settings.value?.language === "en"
     ? "English"
@@ -189,7 +189,7 @@ async function installJava(): Promise<void> {
   }
 }
 function chooseLanguage(language: "ru" | "en" | "es"): void {
-  if (!settings.value) return;
+  if (!settings.value || language !== "ru") return;
   settings.value.language = language;
   document.documentElement.lang = language;
   languageOpen.value = false;
@@ -291,13 +291,16 @@ onBeforeUnmount(() => {
               loop
               preload="auto"
               :style="{ objectFit: settings.backgroundFit }"
+              @error="store.backgroundFailed()"
             />
-            <i
+            <img
               v-else-if="store.backgroundUrl"
+              :src="store.backgroundUrl"
+              alt=""
               :style="{
-                backgroundImage: `url(${store.backgroundUrl})`,
-                backgroundSize: settings.backgroundFit,
+                objectFit: settings.backgroundFit,
               }"
+              @error="store.backgroundFailed()"
             />
             <Icon v-else name="image" :size="28" />
             <b v-if="store.backgroundUrl">{{
@@ -327,6 +330,9 @@ onBeforeUnmount(() => {
             </button>
           </div>
         </div>
+        <p v-if="store.backgroundError" class="inline-error">
+          <Icon name="alert" :size="14" />{{ store.backgroundError }}
+        </p>
         <div
           v-if="store.backgroundUrl"
           class="setting-card compact fit-setting"
@@ -528,7 +534,10 @@ onBeforeUnmount(() => {
             @update:model-value="save"
           />
         </div>
-        <div class="setting-card compact">
+        <div
+          class="setting-card compact"
+          :class="{ 'dropdown-active': nativeLibrariesOpen }"
+        >
           <div class="setting-icon"><Icon name="refresh" :size="18" /></div>
           <div class="setting-copy">
             <b>Нативные библиотеки</b
@@ -877,33 +886,19 @@ onBeforeUnmount(() => {
                 name="check"
                 :size="18"
               /></button
-            ><button
-              class="language"
-              :class="{ active: settings?.language === 'en' }"
-              @click="chooseLanguage('en')"
-            >
+            ><button class="language" disabled>
               <span class="flag en" />
               <div><b>English</b><small>English interface</small></div>
-              <Icon
-                v-if="settings?.language === 'en'"
-                name="check"
-                :size="18"
-              /></button
-            ><button
-              class="language"
-              :class="{ active: settings?.language === 'es' }"
-              @click="chooseLanguage('es')"
-            >
+              <em>В разработке</em></button
+            ><button class="language" disabled>
               <span class="flag es" />
               <div><b>Español</b><small>Interfaz en español</small></div>
-              <Icon
-                v-if="settings?.language === 'es'"
-                name="check"
-                :size="18"
-              />
+              <em>В разработке</em>
             </button>
-          </section></div></Transition
-    ></Teleport>
+          </section>
+        </div></Transition
+      ></Teleport
+    >
   </div>
 </template>
 
@@ -986,6 +981,7 @@ onBeforeUnmount(() => {
   gap: 50px;
 }
 .settings-section {
+  position: relative;
   scroll-margin-top: 22px;
 }
 .settings-section > header {
@@ -1014,6 +1010,7 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 .setting-card {
+  position: relative;
   width: 100%;
   margin-top: 8px;
   padding: 15px 16px;
@@ -1026,6 +1023,9 @@ onBeforeUnmount(() => {
     background 0.25s,
     transform 0.25s var(--ease),
     box-shadow 0.25s;
+}
+.setting-card.dropdown-active {
+  z-index: 60;
 }
 .setting-card:hover {
   border-color: var(--hairline-strong);
@@ -1118,15 +1118,14 @@ label small {
   border: 1px solid var(--hairline);
 }
 .media-preview video,
-.media-preview > i {
+.media-preview > img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
-.media-preview > i {
+.media-preview > img {
   display: block;
-  background-size: cover;
-  background-position: center;
+  object-position: center;
 }
 .media-preview > b {
   position: absolute;
@@ -1221,6 +1220,7 @@ label small {
 }
 .native-dropdown {
   position: relative;
+  z-index: 2;
   width: 190px;
   flex: none;
 }
@@ -1252,7 +1252,7 @@ label small {
 }
 .native-menu {
   position: absolute;
-  z-index: 40;
+  z-index: 80;
   top: calc(100% + 7px);
   right: 0;
   width: 260px;

@@ -28,7 +28,6 @@ const headOuter = ref(true);
 const bodyOuter = ref(true);
 const armsOuter = ref(true);
 const legsOuter = ref(true);
-const activeLayer = ref<"inner" | "outer">("inner");
 const busy = ref(false);
 const error = ref("");
 const history = ref<ImageData[]>([]);
@@ -79,9 +78,13 @@ function textureLayerAt(x: number, y: number): TextureLayer {
     : "inner";
 }
 
-function canEditAt(x: number, y: number): boolean {
-  if (textureLayerAt(x, y) !== activeLayer.value) return false;
-  if (activeLayer.value === "inner") return innerLayer.value;
+function canEditAt(
+  x: number,
+  y: number,
+  layer = textureLayerAt(x, y),
+): boolean {
+  if (textureLayerAt(x, y) !== layer) return false;
+  if (layer === "inner") return innerLayer.value;
   if (!outerLayer.value) return false;
   const region = outerRegions.find(
     (entry) =>
@@ -268,7 +271,11 @@ function hexAt(x: number, y: number): string {
   if (!data) return color.value;
   return `#${[data[0], data[1], data[2]].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
 }
-function drawPixel(x: number, y: number): void {
+function drawPixel(
+  x: number,
+  y: number,
+  layer: TextureLayer = textureLayerAt(x, y),
+): void {
   const ctx = context();
   if (!ctx) return;
   const half = Math.floor(brushSize.value / 2);
@@ -280,17 +287,21 @@ function drawPixel(x: number, y: number): void {
         const px = centerX - half + offsetX;
         const py = y - half + offsetY;
         if (px < 0 || py < 0 || px >= 64 || py >= 64) continue;
-        if (!canEditAt(px, py)) continue;
+        if (!canEditAt(px, py, layer)) continue;
         if (tool.value === "eraser") ctx.clearRect(px, py, 1, 1);
         else ctx.fillRect(px, py, 1, 1);
       }
     }
   }
 }
-function floodFill(x: number, y: number): void {
+function floodFill(
+  x: number,
+  y: number,
+  layer: TextureLayer = textureLayerAt(x, y),
+): void {
   const ctx = context();
   if (!ctx) return;
-  if (!canEditAt(x, y)) return;
+  if (!canEditAt(x, y, layer)) return;
   const image = ctx.getImageData(0, 0, 64, 64);
   const pixels = image.data;
   const start = (y * 64 + x) * 4;
@@ -314,7 +325,7 @@ function floodFill(x: number, y: number): void {
   while (stack.length) {
     const [px, py] = stack.pop()!;
     if (px < 0 || py < 0 || px >= 64 || py >= 64) continue;
-    if (!canEditAt(px, py)) continue;
+    if (!canEditAt(px, py, layer)) continue;
     const index = (py * 64 + px) * 4;
     if (
       pixels[index] !== target[0] ||
@@ -362,6 +373,7 @@ function end(): void {
 function paintModel(payload: {
   x: number;
   y: number;
+  layer: TextureLayer;
   phase: "begin" | "move" | "end";
 }): void {
   if (payload.phase === "end") {
@@ -377,14 +389,14 @@ function paintModel(payload: {
     }
     remember();
     if (tool.value === "fill") {
-      floodFill(payload.x, payload.y);
+      floodFill(payload.x, payload.y, payload.layer);
       updatePreview();
       return;
     }
     drawing = true;
   }
   if (drawing) {
-    drawPixel(payload.x, payload.y);
+    drawPixel(payload.x, payload.y, payload.layer);
     updatePreview();
   }
 }
@@ -523,8 +535,8 @@ onMounted(async () => {
             <p class="eyebrow">Skin Studio 3D</p>
             <h2>Редактор скина</h2>
             <span
-              >Полная модель, оба слоя и инструменты пиксельного
-              редактирования</span
+              >Рисуйте прямо по видимой поверхности: скрытая одежда открывает
+              основной слой</span
             >
           </div>
           <button class="icon-button" @click="emit('close')">
@@ -737,7 +749,6 @@ onMounted(async () => {
                 :model="model"
                 :auto-rotate="false"
                 editable
-                :edit-layer="activeLayer"
                 :inner-layer="innerLayer"
                 :outer-layer="outerLayer"
                 :head-outer="headOuter"
@@ -774,29 +785,7 @@ onMounted(async () => {
           </main>
 
           <aside class="layers-panel">
-            <p class="tool-label">Слои модели</p>
-            <button
-              :class="{ active: activeLayer === 'inner' }"
-              @click="
-                activeLayer = 'inner';
-                innerLayer = true;
-              "
-            >
-              <span><Icon name="shirt" :size="17" /></span>
-              <div><b>Основной слой</b><small>Тело скина</small></div>
-              <i /></button
-            ><button
-              :class="{ active: activeLayer === 'outer' }"
-              @click="
-                activeLayer = 'outer';
-                outerLayer = true;
-              "
-            >
-              <span><Icon name="layers" :size="17" /></span>
-              <div><b>Внешний слой</b><small>Маска и одежда</small></div>
-              <i />
-            </button>
-            <p class="tool-label section-label">Части 2-го слоя</p>
+            <p class="tool-label">Видимые части одежды</p>
             <button
               class="part"
               :class="{ active: headOuter }"
@@ -825,8 +814,9 @@ onMounted(async () => {
             <div class="layer-note">
               <Icon name="pencil" :size="15" />
               <p>
-                Кисть и ластик меняют только выбранный слой. Скрытые части не
-                перехватывают рисование на 3D-модели.
+                Редактор изменяет именно ту поверхность, которую вы видите.
+                Скройте маску, рукав или куртку, чтобы рисовать по основному
+                слою под ними.
               </p>
             </div>
           </aside>

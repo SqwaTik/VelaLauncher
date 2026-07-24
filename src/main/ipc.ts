@@ -25,6 +25,7 @@ import {
   pauseInstall,
   resumeInstall,
   cancelInstall,
+  cancelLaunch,
   checkClientUpdate,
 } from "./services/game";
 import {
@@ -273,6 +274,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.gameLaunch, (_e, account: StoredAccount) =>
     launchGame(account),
   );
+  ipcMain.handle(IPC.gameCancelLaunch, () => cancelLaunch());
 
   // ---- modrinth ----
   ipcMain.handle(

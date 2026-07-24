@@ -82,6 +82,7 @@ import {
   ZoomIn,
   ZoomOut,
   Puzzle,
+  Octagon,
 } from "lucide-vue-next";
 import type { FunctionalComponent } from "vue";
 
@@ -99,6 +100,7 @@ const map: Record<string, IconComp> = {
   settings: Settings,
   play: Play,
   pause: Pause,
+  stop: Octagon,
   download: Download,
   clock: Clock,
   calendar: Calendar,

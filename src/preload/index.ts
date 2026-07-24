@@ -141,6 +141,8 @@ const api = {
       ipcRenderer.invoke(IPC.gameCheckUpdate),
     launch: (account: StoredAccount): Promise<void> =>
       ipcRenderer.invoke(IPC.gameLaunch, account),
+    cancelLaunch: (): Promise<boolean> =>
+      ipcRenderer.invoke(IPC.gameCancelLaunch),
     onProgress: (cb: (p: InstallProgress) => void): (() => void) =>
       on(IPC.gameProgress, cb),
     onLaunchStatus: (cb: (s: LaunchStatus) => void): (() => void) =>

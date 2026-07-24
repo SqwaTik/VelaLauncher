@@ -155,107 +155,109 @@ function confirmRemove(dontAsk: boolean): void {
               tr("Редактировать скин", "Edit skin", "Editar skin")
             }}</span>
           </button>
-        </section>
 
-        <section v-if="account.active" class="cape-wardrobe">
-          <header>
-            <div>
-              <h3>
-                {{ tr("Гардероб плащей", "Cape wardrobe", "Armario de capas") }}
-              </h3>
-              <span>{{ account.customCapes.length }}/5</span>
+          <div v-if="account.active" class="cape-wardrobe">
+            <header>
+              <div>
+                <h3>
+                  {{
+                    tr("Гардероб плащей", "Cape wardrobe", "Armario de capas")
+                  }}
+                </h3>
+                <span>{{ account.customCapes.length }}/5</span>
+              </div>
+              <p>
+                {{
+                  tr(
+                    "Клик — выбрать и заменить, ПКМ — удалить",
+                    "Click to select and replace, right-click to remove",
+                    "Clic para elegir y reemplazar, clic derecho para eliminar",
+                  )
+                }}
+              </p>
+            </header>
+            <div class="cape-list">
+              <button
+                class="cape-tile no-cape"
+                :class="{
+                  active:
+                    !account.activeCustomCape &&
+                    !account.appearance?.capes.some(
+                      (cape) => cape.state === 'ACTIVE',
+                    ),
+                }"
+                :title="
+                  tr('Без локального плаща', 'No local cape', 'Sin capa local')
+                "
+                @click="account.disableCape()"
+              >
+                <Icon name="close" :size="16" /><small>{{
+                  tr("Нет", "None", "Ninguna")
+                }}</small>
+              </button>
+              <button
+                v-for="cape in account.appearance?.capes ?? []"
+                :key="`official-${cape.id}`"
+                class="cape-tile"
+                :class="{
+                  active: !account.activeCustomCape && cape.state === 'ACTIVE',
+                }"
+                :disabled="account.active?.type !== 'microsoft'"
+                :title="
+                  account.active?.type === 'microsoft'
+                    ? tr(
+                        'Выбрать официальный плащ',
+                        'Select official cape',
+                        'Elegir capa oficial',
+                      )
+                    : tr(
+                        'Плащ этого сервиса доступен для просмотра',
+                        'This service cape is available for preview',
+                        'La capa de este servicio está disponible como vista previa',
+                      )
+                "
+                @click="account.selectCape(cape.id)"
+              >
+                <img :src="cape.url" :alt="cape.alias" /><small>{{
+                  cape.alias
+                }}</small>
+              </button>
+              <button
+                v-for="cape in account.customCapes"
+                :key="cape.id"
+                class="cape-tile"
+                :class="{ active: account.activeCustomCape?.id === cape.id }"
+                :title="
+                  tr(
+                    'Нажмите, чтобы выбрать или заменить. ПКМ — удалить',
+                    'Click to select or replace. Right-click to remove',
+                    'Clic para elegir o reemplazar. Clic derecho para eliminar',
+                  )
+                "
+                @click="account.editCustomCape(cape.id)"
+                @contextmenu.prevent="account.removeCustomCape(cape.id)"
+              >
+                <img :src="cape.dataUrl" :alt="cape.name" /><small>{{
+                  cape.name
+                }}</small>
+              </button>
+              <button
+                v-if="account.customCapes.length < 5"
+                class="cape-tile add-cape"
+                :title="
+                  tr('Загрузить PNG-плащ', 'Upload PNG cape', 'Subir capa PNG')
+                "
+                @click="account.addCustomCape()"
+              >
+                <Icon name="plus" :size="18" /><small>{{
+                  tr("Добавить", "Add", "Añadir")
+                }}</small>
+              </button>
             </div>
-            <p>
-              {{
-                tr(
-                  "Клик — выбрать и заменить, ПКМ — удалить",
-                  "Click to select and replace, right-click to remove",
-                  "Clic para elegir y reemplazar, clic derecho para eliminar",
-                )
-              }}
+            <p v-if="account.appearanceError" class="cape-error">
+              <Icon name="alert" :size="13" />{{ account.appearanceError }}
             </p>
-          </header>
-          <div class="cape-list">
-            <button
-              class="cape-tile no-cape"
-              :class="{
-                active:
-                  !account.activeCustomCape &&
-                  !account.appearance?.capes.some(
-                    (cape) => cape.state === 'ACTIVE',
-                  ),
-              }"
-              :title="
-                tr('Без локального плаща', 'No local cape', 'Sin capa local')
-              "
-              @click="account.disableCape()"
-            >
-              <Icon name="close" :size="16" /><small>{{
-                tr("Нет", "None", "Ninguna")
-              }}</small>
-            </button>
-            <button
-              v-for="cape in account.appearance?.capes ?? []"
-              :key="`official-${cape.id}`"
-              class="cape-tile"
-              :class="{
-                active: !account.activeCustomCape && cape.state === 'ACTIVE',
-              }"
-              :disabled="account.active?.type !== 'microsoft'"
-              :title="
-                account.active?.type === 'microsoft'
-                  ? tr(
-                      'Выбрать официальный плащ',
-                      'Select official cape',
-                      'Elegir capa oficial',
-                    )
-                  : tr(
-                      'Плащ этого сервиса доступен для просмотра',
-                      'This service cape is available for preview',
-                      'La capa de este servicio está disponible como vista previa',
-                    )
-              "
-              @click="account.selectCape(cape.id)"
-            >
-              <img :src="cape.url" :alt="cape.alias" /><small>{{
-                cape.alias
-              }}</small>
-            </button>
-            <button
-              v-for="cape in account.customCapes"
-              :key="cape.id"
-              class="cape-tile"
-              :class="{ active: account.activeCustomCape?.id === cape.id }"
-              :title="
-                tr(
-                  'Нажмите, чтобы выбрать или заменить. ПКМ — удалить',
-                  'Click to select or replace. Right-click to remove',
-                  'Clic para elegir o reemplazar. Clic derecho para eliminar',
-                )
-              "
-              @click="account.editCustomCape(cape.id)"
-              @contextmenu.prevent="account.removeCustomCape(cape.id)"
-            >
-              <img :src="cape.dataUrl" :alt="cape.name" /><small>{{
-                cape.name
-              }}</small>
-            </button>
-            <button
-              v-if="account.customCapes.length < 5"
-              class="cape-tile add-cape"
-              :title="
-                tr('Загрузить PNG-плащ', 'Upload PNG cape', 'Subir capa PNG')
-              "
-              @click="account.addCustomCape()"
-            >
-              <Icon name="plus" :size="18" /><small>{{
-                tr("Добавить", "Add", "Añadir")
-              }}</small>
-            </button>
           </div>
-          <p v-if="account.appearanceError" class="cape-error">
-            <Icon name="alert" :size="13" />{{ account.appearanceError }}
-          </p>
         </section>
 
         <section class="accounts-panel">
@@ -532,9 +534,12 @@ function confirmRemove(dontAsk: boolean): void {
 
 <style scoped lang="scss">
 .account-page {
+  width: 100%;
+  min-width: 0;
   max-width: 1180px;
   margin: 0 auto;
-  padding: 28px 30px 56px;
+  padding: 28px clamp(16px, 3vw, 30px) 56px;
+  overflow-x: hidden;
 }
 .page-head {
   margin-bottom: 23px;
@@ -545,7 +550,8 @@ function confirmRemove(dontAsk: boolean): void {
 }
 .page-head h1 {
   margin-top: 3px;
-  font-size: 27px;
+  font-size: clamp(24px, 3vw, 30px);
+  overflow-wrap: anywhere;
 }
 .page-head > div > p:last-child {
   margin-top: 6px;
@@ -564,7 +570,6 @@ function confirmRemove(dontAsk: boolean): void {
   gap: 13px;
 }
 .identity-card,
-.cape-wardrobe,
 .accounts-panel,
 .studio-hero,
 .appearance-section {
@@ -638,7 +643,10 @@ function confirmRemove(dontAsk: boolean): void {
   box-shadow: var(--glow-green);
 }
 .cape-wardrobe {
-  padding: 12px;
+  margin-top: 2px;
+  padding: 14px 12px 12px;
+  border-top: 1px solid var(--hairline);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.018), transparent);
 }
 .cape-wardrobe > header {
   padding: 1px 2px 10px;
@@ -1248,9 +1256,9 @@ function confirmRemove(dontAsk: boolean): void {
 .modal-leave-to .account-modal {
   transform: translateY(24px) scale(0.97);
 }
-@media (max-width: 880px) {
+@media (max-width: 980px) {
   .account-layout {
-    grid-template-columns: 260px minmax(0, 1fr);
+    grid-template-columns: 1fr;
   }
   .studio-hero {
     align-items: stretch;
@@ -1265,12 +1273,8 @@ function confirmRemove(dontAsk: boolean): void {
   }
 }
 @media (max-width: 680px) {
-  .account-layout {
-    grid-template-columns: 1fr;
-  }
   .profile-column {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
+    display: flex;
   }
   .page-head {
     align-items: flex-start;

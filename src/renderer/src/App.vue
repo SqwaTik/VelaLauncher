@@ -88,14 +88,17 @@ onBeforeUnmount(() => {
         playsinline
         preload="auto"
         :style="{ objectFit: settings.settings?.backgroundFit || 'cover' }"
+        @error="settings.backgroundFailed()"
       />
-      <div
+      <img
         v-else-if="settings.backgroundUrl"
         class="background-image"
+        :src="settings.backgroundUrl"
+        alt=""
         :style="{
-          backgroundImage: `url(${settings.backgroundUrl})`,
-          backgroundSize: settings.settings?.backgroundFit || 'cover',
+          objectFit: settings.settings?.backgroundFit || 'cover',
         }"
+        @error="settings.backgroundFailed()"
       />
       <div v-else class="ambient-backdrop"><i /><i /><i /></div>
     </div>
@@ -162,8 +165,8 @@ onBeforeUnmount(() => {
   animation: media-in 0.24s var(--ease) both;
 }
 .background-image {
-  background-position: center;
-  background-repeat: no-repeat;
+  display: block;
+  object-position: center;
 }
 .ambient-backdrop {
   position: absolute;

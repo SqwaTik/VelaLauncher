@@ -37,7 +37,11 @@ import type {
 import { IPC, GAME, BRAND } from "../../shared/constants";
 import { gameDir, loadState, updateStats } from "./store";
 import { detectJava, installJava21 } from "./java";
-import { installProject } from "./modrinth";
+import {
+  installProject,
+  isJarStructurallyValid,
+  repairInstalledMods,
+} from "./modrinth";
 import { setDiscordActivity } from "./discord";
 
 const execAsync = promisify(exec);
@@ -50,6 +54,9 @@ const pendingGameLogs = new WeakMap<
 
 let currentTask: Task<unknown> | null = null;
 let buildProcess: ChildProcess | null = null;
+let activeMinecraftProcess: ChildProcess | null = null;
+let launchInProgress = false;
+let launchGeneration = 0;
 let cancelRequested = false;
 let lastProgress: InstallProgress = { phase: "idle", progress: 0, message: "" };
 
@@ -554,6 +561,30 @@ async function installRoyaleClient(
   });
 }
 
+async function ensureRoyaleClientHealthy(
+  storagePath: string,
+  javaPath: string,
+): Promise<void> {
+  let jarName = "";
+  try {
+    jarName =
+      (
+        JSON.parse(
+          await fs.readFile(join(storagePath, ".royale-client.json"), "utf8"),
+        ) as { jarName?: string }
+      ).jarName ?? "";
+  } catch {
+    /* install metadata will be recreated below */
+  }
+  const path = jarName ? join(storagePath, "mods", jarName) : "";
+  if (path && (await isJarStructurallyValid(path))) return;
+  emitLaunch({
+    state: "launching",
+    message: "Восстанавливаем Royale Master",
+  });
+  await installRoyaleClient(join(storagePath, "mods"), javaPath);
+}
+
 export async function pauseInstall(): Promise<boolean> {
   const task = currentTask;
   if (!task?.isRunning) return false;
@@ -724,6 +755,9 @@ export async function installGame(): Promise<void> {
     const modsPath = join(dir, "mods");
     await fs.mkdir(modsPath, { recursive: true });
     await installRoyaleClient(modsPath, java.path);
+    await repairInstalledMods((message) =>
+      report("verify", 0.95, message, undefined, { canPause: false }),
+    );
     report(
       "verify",
       0.97,
@@ -974,31 +1008,41 @@ async function repairLaunchFiles(
 }
 
 export async function launchGame(account: StoredAccount): Promise<void> {
-  const state = await loadState();
-  const dir = state.settings.storagePath;
-  const folder = MinecraftFolder.from(dir);
-  const id = fabricVersionId();
-  if (!existsSync(folder.getVersionJson(id))) {
-    emitLaunch({ state: "error", message: "Игра не установлена" });
-    return;
-  }
-
-  let java = await detectJava(state.settings.javaPath);
-  if (!java?.valid) java = await installJava21();
-  if (!java?.valid) {
-    emitLaunch({
-      state: "error",
-      message: `Не найдена Java ${GAME.javaMajor}+. Установите её в настройках.`,
-    });
-    return;
-  }
-
-  emitLaunch({ state: "launching", message: "Подготовка запуска" });
-  await setDiscordActivity({
-    details: "Запускает Royale Master",
-    state: `Minecraft ${GAME.minecraftVersion}`,
-  });
+  if (launchInProgress || activeMinecraftProcess)
+    throw new Error("Minecraft уже запускается");
+  const generation = ++launchGeneration;
+  const cancelled = (): boolean => generation !== launchGeneration;
+  launchInProgress = true;
   try {
+    const state = await loadState();
+    if (cancelled()) return;
+    const dir = state.settings.storagePath;
+    const folder = MinecraftFolder.from(dir);
+    const id = fabricVersionId();
+    if (!existsSync(folder.getVersionJson(id))) {
+      emitLaunch({ state: "error", message: "Игра не установлена" });
+      if (generation === launchGeneration) launchInProgress = false;
+      return;
+    }
+
+    let java = await detectJava(state.settings.javaPath);
+    if (!java?.valid) java = await installJava21();
+    if (cancelled()) return;
+    if (!java?.valid) {
+      emitLaunch({
+        state: "error",
+        message: `Не найдена Java ${GAME.javaMajor}+. Установите её в настройках.`,
+      });
+      if (generation === launchGeneration) launchInProgress = false;
+      return;
+    }
+
+    emitLaunch({ state: "launching", message: "Подготовка запуска" });
+    await setDiscordActivity({
+      details: "Запускает Royale Master",
+      state: `Minecraft ${GAME.minecraftVersion}`,
+    });
+    if (cancelled()) return;
     if (state.settings.preLaunchCommand.trim()) {
       emitLaunch({
         state: "launching",
@@ -1010,6 +1054,7 @@ export async function launchGame(account: StoredAccount): Promise<void> {
         env: environmentFromText(state.settings.environmentVariables),
       });
     }
+    if (cancelled()) return;
     let resolved = await Version.parse(folder, id);
     emitLaunch({ state: "launching", message: "Проверяем файлы игры" });
     resolved = await repairLaunchFiles(
@@ -1018,6 +1063,12 @@ export async function launchGame(account: StoredAccount): Promise<void> {
       resolved,
       state.settings.quickLaunch,
     );
+    if (cancelled()) return;
+    await repairInstalledMods((message) =>
+      emitLaunch({ state: "launching", message }),
+    );
+    await ensureRoyaleClientHealthy(dir, java.path);
+    if (cancelled()) return;
     const automaticMax = Math.min(
       8192,
       Math.max(
@@ -1092,11 +1143,17 @@ export async function launchGame(account: StoredAccount): Promise<void> {
           ? { jar: authlibJar, server: authServer }
           : undefined,
     });
+    if (cancelled()) {
+      process.kill();
+      return;
+    }
+    activeMinecraftProcess = process;
 
     const watcher = createMinecraftProcessWatcher(process);
     const launcherWindow = BrowserWindow.getAllWindows()[0];
     const logWindow = state.settings.showLog ? createGameLogWindow() : null;
     let logStream: ReturnType<typeof createWriteStream> | null = null;
+    let recentOutput = "";
     if (state.settings.devMode) {
       const logDirectory = join(dir, "logs");
       await fs.mkdir(logDirectory, { recursive: true });
@@ -1114,6 +1171,7 @@ export async function launchGame(account: StoredAccount): Promise<void> {
       kind: "stdout" | "stderr",
     ): void => {
       const text = chunk.toString();
+      recentOutput = `${recentOutput}${text}`.slice(-32_000);
       logStream?.write(`[${kind}] ${text}`);
       appendGameLog(logWindow, text, kind === "stderr" ? "stderr" : "");
     };
@@ -1127,6 +1185,7 @@ export async function launchGame(account: StoredAccount): Promise<void> {
     let launcherHidden = false;
     const started = Date.now();
     watcher.once("minecraft-window-ready", () => {
+      if (cancelled()) return;
       if (minecraftWindowReady) return;
       minecraftWindowReady = true;
       emitLaunch({ state: "running", message: "Игра запущена" });
@@ -1140,15 +1199,22 @@ export async function launchGame(account: StoredAccount): Promise<void> {
         launcherWindow.hide();
       }
     });
-    watcher.on("error", (error) =>
+    watcher.on("error", (error) => {
+      if (activeMinecraftProcess === process) activeMinecraftProcess = null;
+      if (cancelled()) return;
+      if (generation === launchGeneration) launchInProgress = false;
       emitLaunch({
-        state: "error",
+        state: "crashed",
         message: error instanceof Error ? error.message : String(error),
-      }),
-    );
+        crashReport:
+          error instanceof Error ? error.stack || error.message : String(error),
+      });
+    });
     watcher.on(
       "minecraft-exit",
       ({ code, crashReport, crashReportLocation }) => {
+        if (activeMinecraftProcess === process) activeMinecraftProcess = null;
+        if (generation === launchGeneration) launchInProgress = false;
         logStream?.end(
           `\n[Royale Launcher] Процесс завершён с кодом ${code ?? 0}.\n`,
         );
@@ -1157,6 +1223,7 @@ export async function launchGame(account: StoredAccount): Promise<void> {
           `\nПроцесс Minecraft завершён с кодом ${code ?? 0}.\n`,
           "system",
         );
+        if (cancelled()) return;
         const minutes = Math.max(
           0,
           Math.round((Date.now() - started) / 60_000),
@@ -1170,24 +1237,49 @@ export async function launchGame(account: StoredAccount): Promise<void> {
           launcherWindow.focus();
         }
         void setDiscordActivity({ details: "В главном меню" });
+        const failed = Boolean(crashReport) || (code ?? 0) !== 0;
         emitLaunch(
-          crashReport
+          failed
             ? {
                 state: "crashed",
                 message: "Royale Master завершился с ошибкой",
                 code,
-                crashReport,
+                crashReport:
+                  crashReport ||
+                  recentOutput ||
+                  `Minecraft завершился с кодом ${code ?? "неизвестно"}.`,
                 crashReportLocation,
               }
             : { state: "exited", code },
         );
       },
     );
+    if (generation === launchGeneration) launchInProgress = false;
   } catch (error) {
+    if (generation === launchGeneration) launchInProgress = false;
+    if (cancelled()) return;
+    const process = activeMinecraftProcess;
+    activeMinecraftProcess = null;
+    if (process && !process.killed) process.kill();
     emitLaunch({
-      state: "error",
+      state: "crashed",
       message: error instanceof Error ? error.message : String(error),
+      crashReport:
+        error instanceof Error ? error.stack || error.message : String(error),
     });
     await setDiscordActivity({ details: "В главном меню" });
   }
+}
+
+export async function cancelLaunch(): Promise<boolean> {
+  if (!launchInProgress && !activeMinecraftProcess) return false;
+  const process = activeMinecraftProcess;
+  launchGeneration += 1;
+  launchInProgress = false;
+  activeMinecraftProcess = null;
+  if (process && !process.killed) {
+    process.kill();
+  }
+  emitLaunch({ state: "exited", code: 0 });
+  return true;
 }

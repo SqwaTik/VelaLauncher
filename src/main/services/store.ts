@@ -91,7 +91,7 @@ export async function loadState(): Promise<PersistShape> {
     ) {
       cache.settings.backgroundMediaPath = cache.settings.backgroundImagePath;
     }
-    if ((cache.settings.language as string) === "uk")
+    if ((cache.settings.language as string) !== "ru")
       cache.settings.language = "ru";
     if (!parsed.settings || !("memoryMode" in parsed.settings)) {
       cache.settings.memoryMode = cache.settings.memoryAuto ? "auto" : "manual";

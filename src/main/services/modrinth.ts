@@ -287,6 +287,9 @@ function emitModProgress(
 
 interface MetadataShape {
   [filename: string]: {
+    sha1?: string;
+    expectedSize?: number;
+    validatedMtimeMs?: number;
     projectId?: string;
     title?: string;
     versionNumber?: string;
@@ -322,6 +325,36 @@ async function writeMetadata(
   await fs.writeFile(temp, JSON.stringify(metadata, null, 2), "utf8");
   await fs.rm(file, { force: true });
   await fs.rename(temp, file);
+}
+
+async function sha1File(path: string): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const digest = createHash("sha1");
+    createReadStream(path)
+      .on("data", (chunk) => digest.update(chunk))
+      .on("end", () => resolve(digest.digest("hex")))
+      .on("error", reject);
+  });
+}
+
+export async function isJarStructurallyValid(path: string): Promise<boolean> {
+  let handle: Awaited<ReturnType<typeof fs.open>> | null = null;
+  try {
+    const stat = await fs.stat(path);
+    if (stat.size < 22) return false;
+    handle = await fs.open(path, "r");
+    const header = Buffer.alloc(4);
+    await handle.read(header, 0, header.length, 0);
+    if (header[0] !== 0x50 || header[1] !== 0x4b) return false;
+    const tailLength = Math.min(stat.size, 65_557);
+    const tail = Buffer.alloc(tailLength);
+    await handle.read(tail, 0, tail.length, stat.size - tailLength);
+    return tail.indexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06])) >= 0;
+  } catch {
+    return false;
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
 }
 
 function normalizedName(value: string): string {
@@ -409,9 +442,13 @@ export async function installMod(
   await fs.rm(destination, { force: true });
   await fs.rm(`${destination}.disabled`, { force: true });
   await fs.rename(temporary, destination);
+  const installedStat = await fs.stat(destination);
 
   const metadata = await readMetadata(dir);
   metadata[version.filename] = {
+    sha1: version.sha1,
+    expectedSize: version.size || installedStat.size,
+    validatedMtimeMs: installedStat.mtimeMs,
     projectId: meta?.projectId,
     title: meta?.title,
     versionNumber: version.version_number,
@@ -427,10 +464,91 @@ export async function installMod(
 
   return {
     filename: version.filename,
-    size: (await fs.stat(destination)).size,
+    size: installedStat.size,
     enabled: true,
     ...metadata[version.filename],
   };
+}
+
+export async function repairInstalledMods(
+  onStatus?: (message: string) => void,
+): Promise<{ repaired: string[]; disabled: string[] }> {
+  const dir = await modsDir();
+  const installed = await listInstalled();
+  const repaired: string[] = [];
+  const disabled: string[] = [];
+
+  for (const mod of installed.filter((entry) => entry.enabled)) {
+    if (/^royale-master-/i.test(mod.filename)) continue;
+    const path = join(dir, mod.filename);
+    const structural = await isJarStructurallyValid(path);
+    if (!mod.projectId || !mod.versionId) {
+      if (!structural) {
+        onStatus?.(`Отключаем повреждённый мод ${mod.title || mod.filename}`);
+        await fs.rm(`${path}.disabled`, { force: true });
+        await fs.rename(path, `${path}.disabled`);
+        disabled.push(mod.title || mod.filename);
+      }
+      continue;
+    }
+
+    let expected: ModVersionFile;
+    try {
+      expected = await exactVersion(mod.versionId);
+    } catch {
+      if (structural) continue;
+      onStatus?.(`Отключаем повреждённый мод ${mod.title || mod.filename}`);
+      await fs.rm(`${path}.disabled`, { force: true });
+      await fs.rename(path, `${path}.disabled`);
+      disabled.push(mod.title || mod.filename);
+      continue;
+    }
+
+    const stat = await fs.stat(path);
+    const currentMetadata = await readMetadata(dir);
+    const remembered = currentMetadata[mod.filename];
+    const unchanged =
+      structural &&
+      remembered?.sha1 === expected.sha1 &&
+      remembered.expectedSize === expected.size &&
+      remembered.validatedMtimeMs === stat.mtimeMs &&
+      stat.size === expected.size;
+    const valid =
+      unchanged ||
+      (structural &&
+        stat.size === expected.size &&
+        (await sha1File(path)) === expected.sha1);
+    if (valid) {
+      currentMetadata[mod.filename] = {
+        ...remembered,
+        sha1: expected.sha1,
+        expectedSize: expected.size,
+        validatedMtimeMs: stat.mtimeMs,
+      };
+      await writeMetadata(dir, currentMetadata);
+      continue;
+    }
+
+    onStatus?.(`Восстанавливаем ${mod.title || mod.filename}`);
+    const restored = await installMod(expected, {
+      projectId: mod.projectId,
+      title: mod.title || mod.filename,
+      slug: mod.slug,
+      description: mod.description,
+      body: mod.body,
+      iconUrl: mod.iconUrl,
+      gallery: mod.gallery,
+    });
+    if (restored.filename !== mod.filename) {
+      await fs.rm(path, { force: true });
+      const latestMetadata = await readMetadata(dir);
+      delete latestMetadata[mod.filename];
+      await writeMetadata(dir, latestMetadata);
+    }
+    repaired.push(mod.title || mod.filename);
+  }
+
+  return { repaired, disabled };
 }
 
 /** Resolve required dependencies recursively and reject known incompatibilities. */

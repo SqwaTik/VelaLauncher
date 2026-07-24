@@ -291,6 +291,24 @@ export const useLauncherStore = defineStore("launcher", () => {
     }
   }
 
+  async function stopLaunch(): Promise<void> {
+    if (state.value !== "launching" || transportBusy.value) return;
+    transportBusy.value = true;
+    errorText.value = "";
+    statusText.value = "Останавливаем запуск…";
+    try {
+      const stopped = await window.royale.game.cancelLaunch();
+      if (!stopped) {
+        state.value = "installed";
+        statusText.value = "";
+      }
+    } catch (error) {
+      errorText.value = userFacingError(error);
+    } finally {
+      transportBusy.value = false;
+    }
+  }
+
   return {
     state,
     progress,
@@ -316,6 +334,7 @@ export const useLauncherStore = defineStore("launcher", () => {
     cancel,
     checkUpdate,
     play,
+    stopLaunch,
     dismissCrash: () => {
       crash.value = null;
     },

@@ -1,60 +1,49 @@
 <script setup lang="ts">
-/**
- * Boot / loading overlay shown while the app hydrates persisted state and
- * subscribes to backend events. An isometric Minecraft-style block builds
- * itself, the wordmark rises, status text cycles, and a green rail fills.
- * Fades + scales out once `ready` flips true.
- */
-import { ref, onMounted, onBeforeUnmount, watch } from "vue";
-import { BRAND } from "@shared/constants";
-import royaleLogo from "@/assets/images/royale-logo-transparent.png";
+import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 const props = defineProps<{ ready: boolean }>();
-
-const pct = ref(6);
+const pct = ref(8);
 const leaving = ref(false);
 const gone = ref(false);
-const statusText = ref("Инициализация…");
-
+const statusText = ref("Запускаем интерфейс…");
 const steps = [
-  "Инициализация…",
-  "Загрузка настроек…",
-  "Проверка Java…",
-  "Подключение к Modrinth…",
-  "Почти готово…",
+  "Запускаем интерфейс…",
+  "Читаем настройки…",
+  "Проверяем игровые службы…",
+  "Готовим Royale…",
 ];
-let stepIdx = 0;
 const startedAt = Date.now();
+let step = 0;
 let progressTimer: ReturnType<typeof setInterval> | null = null;
-let stepTimer: ReturnType<typeof setInterval> | null = null;
+let textTimer: ReturnType<typeof setInterval> | null = null;
 
 onMounted(() => {
   progressTimer = setInterval(() => {
-    if (pct.value < 90) pct.value += Math.max(0.8, (92 - pct.value) * 0.07);
-  }, 90);
-  stepTimer = setInterval(() => {
-    stepIdx = Math.min(stepIdx + 1, steps.length - 1);
-    statusText.value = steps[stepIdx];
-  }, 620);
+    if (pct.value < 91) pct.value += Math.max(0.7, (93 - pct.value) * 0.08);
+  }, 85);
+  textTimer = setInterval(() => {
+    step = Math.min(step + 1, steps.length - 1);
+    statusText.value = steps[step];
+  }, 430);
 });
 
 onBeforeUnmount(() => {
   if (progressTimer) clearInterval(progressTimer);
-  if (stepTimer) clearInterval(stepTimer);
+  if (textTimer) clearInterval(textTimer);
 });
 
 watch(
   () => props.ready,
-  (r) => {
-    if (!r) return;
-    const remaining = Math.max(0, 1350 - (Date.now() - startedAt));
+  (ready) => {
+    if (!ready) return;
+    const remaining = Math.max(0, 900 - (Date.now() - startedAt));
     setTimeout(() => {
       if (progressTimer) clearInterval(progressTimer);
-      if (stepTimer) clearInterval(stepTimer);
+      if (textTimer) clearInterval(textTimer);
       pct.value = 100;
       statusText.value = "Готово";
-      setTimeout(() => (leaving.value = true), 240);
-      setTimeout(() => (gone.value = true), 760);
+      setTimeout(() => (leaving.value = true), 120);
+      setTimeout(() => (gone.value = true), 500);
     }, remaining);
   },
 );
@@ -64,20 +53,16 @@ watch(
   <Transition name="boot">
     <div v-if="!gone" class="boot" :class="{ leaving }">
       <div class="boot-inner">
-        <div class="logo-stage">
-          <span /><img :src="royaleLogo" alt="Royale" />
-        </div>
-
-        <h1 class="wordmark">
-          <span class="a">{{ BRAND.name }}</span>
-          <span class="b">MASTER</span>
-        </h1>
-        <p class="tagline">{{ BRAND.tagline }}</p>
-
-        <div class="rail">
-          <div class="fill" :style="{ width: pct + '%' }" />
+        <div class="gyro" aria-hidden="true">
+          <i class="orbit orbit-a" /><i class="orbit orbit-b" /><i
+            class="orbit orbit-c"
+          /><span><b /></span>
         </div>
         <p class="status">{{ statusText }}</p>
+        <div class="rail">
+          <i :style="{ width: `${pct}%` }" />
+        </div>
+        <small>{{ Math.round(pct) }}%</small>
       </div>
     </div>
   </Transition>
@@ -90,230 +75,149 @@ watch(
   z-index: 999;
   display: grid;
   place-items: center;
+  overflow: hidden;
   background:
     radial-gradient(
-      700px 460px at 50% 34%,
-      rgba(86, 197, 104, 0.1),
-      transparent 60%
+      circle at 50% 44%,
+      rgba(62, 158, 91, 0.11),
+      transparent 31%
     ),
-    var(--surface-0);
-  overflow: hidden;
+    #080c09;
+}
+.boot::before {
+  content: "";
+  position: absolute;
+  width: 520px;
+  height: 520px;
+  border: 1px solid rgba(86, 197, 104, 0.035);
+  transform: rotate(45deg);
+  animation: ambient 9s linear infinite;
 }
 .boot-inner {
   position: relative;
+  width: 280px;
   display: flex;
-  flex-direction: column;
   align-items: center;
+  flex-direction: column;
 }
-.logo-stage {
+.gyro {
   position: relative;
-  width: 122px;
-  height: 122px;
-  margin-bottom: 26px;
-  border-radius: 28px;
-  padding: 2px;
-  background: linear-gradient(135deg, #b445ff, #447dff, #58df89);
-  box-shadow: 0 22px 70px rgba(84, 71, 255, 0.34);
-  animation: logo-float 3s ease-in-out infinite;
+  width: 118px;
+  height: 118px;
+  display: grid;
+  place-items: center;
+  perspective: 380px;
 }
-.logo-stage::before {
+.orbit {
+  position: absolute;
+  inset: 13px;
+  border: 1px solid rgba(101, 214, 127, 0.55);
+  border-radius: 50%;
+  box-shadow:
+    inset 0 0 18px rgba(83, 195, 106, 0.08),
+    0 0 16px rgba(83, 195, 106, 0.08);
+}
+.orbit::after {
   content: "";
   position: absolute;
-  inset: -30px;
+  top: -3px;
+  left: 50%;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  background: radial-gradient(
-    circle,
-    rgba(105, 69, 255, 0.26),
-    transparent 68%
-  );
-  z-index: -1;
-  animation: pulse 2.4s ease-in-out infinite;
+  background: #77dc8c;
+  box-shadow: 0 0 13px #56c568;
 }
-.logo-stage img {
-  width: 100%;
-  height: 100%;
-  display: block;
-  object-fit: cover;
-  border-radius: 26px;
+.orbit-a {
+  animation: orbit-a 1.8s linear infinite;
 }
-.logo-stage span {
-  position: absolute;
-  inset: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 21px;
-  z-index: 2;
+.orbit-b {
+  animation: orbit-b 2.2s linear infinite reverse;
 }
-@keyframes logo-float {
-  50% {
-    transform: translateY(-8px) scale(1.025);
-  }
+.orbit-c {
+  inset: 25px;
+  animation: orbit-c 1.45s linear infinite;
 }
-@keyframes pulse {
-  50% {
-    transform: scale(1.18);
-    opacity: 0.65;
-  }
+.gyro > span {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(118, 229, 143, 0.65);
+  transform: rotate(45deg);
+  background: rgba(83, 195, 106, 0.08);
+  box-shadow: 0 0 30px rgba(83, 195, 106, 0.18);
+  animation: core 1.6s ease-in-out infinite;
 }
-
-/* --- isometric cube --- */
-.cube {
-  position: relative;
-  width: 108px;
-  height: 116px;
-  margin-bottom: 30px;
-  transform-style: preserve-3d;
-  animation: cube-bob 3s var(--ease-in-out) infinite;
-}
-.face {
-  position: absolute;
-  width: 54px;
-  height: 54px;
-  left: 27px;
-  top: 28px;
-  opacity: 0;
-}
-.top {
-  background: linear-gradient(135deg, #74d886, #56c568);
-  transform: rotate(45deg) skew(-15deg, -15deg) translateY(-32px) scaleY(0.58);
-  animation: face-in 0.5s var(--ease) 0.1s forwards;
-}
-.left {
-  background: linear-gradient(135deg, #3a9e4c, #2f7d3c);
-  transform: skewY(20deg) translateX(-19px) translateY(6px);
-  animation: face-in 0.5s var(--ease) 0.28s forwards;
-}
-.right {
-  background: linear-gradient(135deg, #4bb85c, #3a9e4c);
-  transform: skewY(-20deg) translateX(19px) translateY(6px);
-  animation: face-in 0.5s var(--ease) 0.46s forwards;
-}
-/* faces fade in without touching their positioning transforms */
-@keyframes face-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-.spark {
-  position: absolute;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--green-bright);
-  opacity: 0;
-}
-.s1 {
-  left: 6px;
-  top: 20px;
-  animation: spark 1.8s var(--ease-in-out) 0.9s infinite;
-}
-.s2 {
-  right: 8px;
-  top: 40px;
-  animation: spark 1.8s var(--ease-in-out) 1.3s infinite;
-}
-.s3 {
-  left: 18px;
-  bottom: 8px;
-  animation: spark 1.8s var(--ease-in-out) 1.6s infinite;
-}
-
-.wordmark {
-  display: flex;
-  align-items: baseline;
-  gap: 11px;
-  font-family: var(--font-display);
-  font-size: 40px;
-  letter-spacing: 0.05em;
-  opacity: 0;
-  animation: rise 0.6s var(--ease) 0.5s forwards;
-  .a {
-    color: var(--text-0);
-  }
-  .b {
-    background: linear-gradient(180deg, var(--green-bright), var(--green-deep));
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-  }
-}
-.tagline {
-  color: var(--text-2);
-  font-size: 13px;
-  letter-spacing: 0.03em;
-  opacity: 0;
-  margin-top: 6px;
-  animation: rise 0.6s var(--ease) 0.68s forwards;
-}
-.rail {
-  margin-top: 30px;
-  width: 240px;
-  height: 4px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-  overflow: hidden;
-  opacity: 0;
-  animation: rise 0.6s var(--ease) 0.82s forwards;
-}
-.fill {
-  height: 100%;
-  border-radius: 999px;
-  background: var(--green-grad);
-  transition: width 0.3s var(--ease);
-  box-shadow: 0 0 14px rgba(86, 197, 104, 0.7);
+.gyro > span b {
+  width: 10px;
+  height: 10px;
+  background: #73d889;
+  box-shadow: 0 0 18px #56c568;
 }
 .status {
-  margin-top: 14px;
-  font-size: 12.5px;
-  color: var(--text-3);
+  min-height: 20px;
+  margin-top: 24px;
+  color: var(--text-1);
+  font-size: 11.5px;
   letter-spacing: 0.02em;
-  opacity: 0;
-  animation: rise 0.6s var(--ease) 0.95s forwards;
 }
-
-@keyframes cube-bob {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-9px);
-  }
+.rail {
+  width: 220px;
+  height: 3px;
+  margin-top: 11px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
 }
-@keyframes spark {
-  0%,
-  100% {
-    opacity: 0;
-    transform: translateY(0) scale(0.6);
-  }
-  40% {
-    opacity: 1;
-    transform: translateY(-10px) scale(1);
-  }
+.rail i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #338b4a, #6ad081);
+  box-shadow: 0 0 12px rgba(86, 197, 104, 0.55);
+  transition: width 0.22s ease-out;
 }
-@keyframes rise {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
-  }
+.boot-inner small {
+  margin-top: 8px;
+  color: var(--text-3);
+  font: 8px var(--font-num);
+}
+@keyframes orbit-a {
   to {
-    opacity: 1;
-    transform: translateY(0);
+    transform: rotate(360deg) rotateX(58deg);
   }
 }
-
-.boot-enter-active,
-.boot-leave-active {
-  transition: opacity 0.5s var(--ease);
+@keyframes orbit-b {
+  to {
+    transform: rotate(360deg) rotateY(63deg);
+  }
+}
+@keyframes orbit-c {
+  to {
+    transform: rotate(-360deg) rotateX(72deg) rotateY(18deg);
+  }
+}
+@keyframes core {
+  50% {
+    transform: rotate(135deg) scale(0.82);
+  }
+}
+@keyframes ambient {
+  to {
+    transform: rotate(405deg);
+  }
 }
 .boot.leaving {
   opacity: 0;
-  transform: scale(1.05);
+  transform: scale(1.025);
   transition:
-    opacity 0.5s var(--ease),
-    transform 0.5s var(--ease);
+    opacity 0.34s ease,
+    transform 0.34s ease;
+}
+.boot-enter-active,
+.boot-leave-active {
+  transition: opacity 0.3s ease;
 }
 .boot-leave-to {
   opacity: 0;

@@ -282,6 +282,9 @@ export interface InstalledMod {
   filename: string;
   size: number;
   enabled: boolean;
+  sha1?: string;
+  expectedSize?: number;
+  validatedMtimeMs?: number;
   projectId?: string;
   title?: string;
   versionNumber?: string;

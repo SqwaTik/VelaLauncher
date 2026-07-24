@@ -104,6 +104,7 @@ export const IPC = {
   gameCancel: "game:cancel",
   gameCheckUpdate: "game:check-update",
   gameLaunch: "game:launch",
+  gameCancelLaunch: "game:cancel-launch",
   gameProgress: "game:progress", // main -> renderer (event)
   gameLaunchStatus: "game:launch-status", // main -> renderer (event)
 

@@ -34,7 +34,7 @@ let contentRefreshTimer: ReturnType<typeof setInterval> | null = null;
 
 const busy = computed(
   () =>
-    ["launching", "running"].includes(launcher.state) ||
+    launcher.state === "running" ||
     (launcher.state === "downloading" &&
       launcher.installProgress?.canPause === false) ||
     account.refreshing,
@@ -63,8 +63,9 @@ const actionLabel = computed(() => {
     return (
       launcher.statusText || tr("Загрузка…", "Downloading…", "Descargando…")
     );
-  if (launcher.state === "launching" || account.refreshing)
-    return tr("Подготовка…", "Preparing…", "Preparando…");
+  if (launcher.state === "launching")
+    return tr("Остановить запуск", "Stop launch", "Detener inicio");
+  if (account.refreshing) return tr("Подготовка…", "Preparing…", "Preparando…");
   if (launcher.state === "running")
     return tr("Игра запущена", "Game is running", "Juego iniciado");
   if (launcher.updateInfo?.available)
@@ -82,11 +83,13 @@ const actionIcon = computed(() =>
         : "pause"
       : launcher.state === "not-installed" || launcher.updateInfo?.available
         ? "download"
-        : launcher.state === "running"
-          ? "check"
-          : !account.active
-            ? "user"
-            : "play",
+        : launcher.state === "launching"
+          ? "stop"
+          : launcher.state === "running"
+            ? "check"
+            : !account.active
+              ? "user"
+              : "play",
 );
 const actionSecondary = computed(() => {
   if (["downloading", "paused"].includes(launcher.state)) {
@@ -105,6 +108,7 @@ const actionSecondary = computed(() => {
 function launch(): void {
   if (launcher.state === "downloading") void launcher.pause();
   else if (launcher.state === "paused") void launcher.resume();
+  else if (launcher.state === "launching") void launcher.stopLaunch();
   else if (launcher.state === "not-installed" || launcher.updateInfo?.available)
     void launcher.install();
   else if (launcher.state === "installed" && !account.active)
@@ -1416,12 +1420,9 @@ onBeforeUnmount(() => {
   line-height: 1.4;
 }
 .content-icons {
-  position: absolute;
-  left: 12px;
-  right: 12px;
-  bottom: 14px;
   display: flex;
   align-items: center;
+  margin-top: 13px;
   min-height: 30px;
 }
 .content-icons > span,

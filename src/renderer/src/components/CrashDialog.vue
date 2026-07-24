@@ -44,7 +44,7 @@ async function checkAndRepair(): Promise<void> {
           <header>
             <span><Icon name="alert" :size="25" /></span>
             <div>
-              <p class="eyebrow">ROYale recovery</p>
+              <p class="eyebrow">ROYALE RECOVERY</p>
               <h2>Royale Master неожиданно закрылся</h2>
             </div>
             <button class="icon-button" @click="launcher.dismissCrash()">
@@ -78,8 +78,8 @@ async function checkAndRepair(): Promise<void> {
             <p>
               <b>Безопасное восстановление</b
               ><small
-                >Лаунчер проверит Minecraft, Fabric API и последний коммит
-                Royale Master.</small
+                >Лаунчер проверит библиотеки, игровые ресурсы, моды и файлы
+                Royale Master, а повреждённые загрузит заново.</small
               >
             </p>
           </div>

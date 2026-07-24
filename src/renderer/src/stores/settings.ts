@@ -31,6 +31,7 @@ export const useSettingsStore = defineStore("settings", () => {
   const launcherUpdateError = ref("");
   const launcherUpdateProgress = ref<LauncherUpdateProgress | null>(null);
   const launcherUpdateInstalling = ref(false);
+  const backgroundError = ref("");
   const screenshotPaths = ref<string[]>([]);
   const content = ref<GameContentSummary>({
     mods: 0,
@@ -145,23 +146,49 @@ export const useSettingsStore = defineStore("settings", () => {
   async function pickBackground(): Promise<void> {
     const path = await window.royale.app.pickMedia();
     if (!path || !settings.value) return;
-    settings.value.backgroundMediaPath = path;
-    settings.value.backgroundImagePath = null;
-    await saveNow();
+    backgroundError.value = "";
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    // Persist first. The custom media protocol only serves paths already
+    // whitelisted in the main-process state; changing the reactive value
+    // before IPC completed caused the first request to receive 403 forever.
+    const next: AppSettings = {
+      ...snapshot()!,
+      backgroundMediaPath: path,
+      backgroundImagePath: null,
+    };
+    const persisted = await window.royale.state.saveSettings(next);
+    settings.value = persisted.settings;
   }
 
   async function pickGallery(): Promise<void> {
     const paths = await window.royale.app.pickGallery();
     if (!paths.length || !settings.value) return;
-    settings.value.galleryImagePaths = [...new Set(paths)].slice(0, 12);
-    await saveNow();
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    const next: AppSettings = {
+      ...snapshot()!,
+      galleryImagePaths: [...new Set(paths)].slice(0, 12),
+    };
+    const persisted = await window.royale.state.saveSettings(next);
+    settings.value = persisted.settings;
   }
 
   async function clearBackground(): Promise<void> {
     if (!settings.value) return;
     settings.value.backgroundMediaPath = null;
     settings.value.backgroundImagePath = null;
+    backgroundError.value = "";
     await saveNow();
+  }
+
+  function backgroundFailed(): void {
+    backgroundError.value =
+      "Не удалось открыть этот файл. Проверьте, что он не перемещён и использует поддерживаемый кодек.";
   }
 
   async function clearGallery(): Promise<void> {
@@ -250,6 +277,7 @@ export const useSettingsStore = defineStore("settings", () => {
     launcherUpdateError,
     launcherUpdateProgress,
     launcherUpdateInstalling,
+    backgroundError,
     hydrate,
     save,
     saveNow,
@@ -260,6 +288,7 @@ export const useSettingsStore = defineStore("settings", () => {
     pickBackground,
     pickGallery,
     clearBackground,
+    backgroundFailed,
     clearGallery,
     checkLauncherUpdate,
     installLauncherUpdate,
