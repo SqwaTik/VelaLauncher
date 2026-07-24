@@ -68,7 +68,9 @@ const actionIcon = computed(() =>
   launcher.state === "paused"
     ? "play"
     : launcher.state === "downloading"
-      ? "pause"
+      ? launcher.installProgress?.canPause === false
+        ? "spinner"
+        : "pause"
       : launcher.state === "not-installed" || launcher.updateInfo?.available
         ? "download"
         : launcher.state === "running"
@@ -606,7 +608,7 @@ onBeforeUnmount(() => {
             · {{ formatBytes(launcher.installProgress.bytesPerSecond) }}/с
           </span>
         </div>
-        <button
+        <div
           class="launch-pill"
           :class="{
             busy,
@@ -614,8 +616,6 @@ onBeforeUnmount(() => {
             paused: launcher.state === 'paused',
             transporting: launcher.transportBusy,
           }"
-          :disabled="busy || launcher.transportBusy"
-          @click="launch"
         >
           <span
             v-if="
@@ -623,28 +623,48 @@ onBeforeUnmount(() => {
             "
             class="progress"
             :style="{ width: `${launcher.progress}%` }"
-          /><span class="play-orb"
-            ><Icon
-              :name="actionIcon"
-              :size="21"
-              :class="{ spin: account.refreshing }" /></span
-          ><b>{{ actionLabel }}</b
-          ><span
+          />
+          <button
+            class="launch-main-action"
+            :disabled="busy || launcher.transportBusy"
+            @click="launch"
+          >
+            <span class="play-orb"
+              ><Icon
+                :name="actionIcon"
+                :size="21"
+                :class="{
+                  spin:
+                    account.refreshing ||
+                    (launcher.state === 'downloading' &&
+                      launcher.installProgress?.canPause === false),
+                }" /></span
+            ><b>{{ actionLabel }}</b>
+          </button>
+          <button
             class="launch-settings"
+            :disabled="launcher.transportBusy"
+            :title="
+              ['downloading', 'paused'].includes(launcher.state)
+                ? 'Остановить установку'
+                : 'Открыть настройки'
+            "
             @click.stop="
               ['downloading', 'paused'].includes(launcher.state)
                 ? launcher.cancel()
                 : router.push('/settings')
             "
-            ><Icon
+          >
+            <Icon
               :name="
                 ['downloading', 'paused'].includes(launcher.state)
                   ? 'close'
                   : 'settings'
               "
               :size="19"
-          /></span>
-        </button>
+            />
+          </button>
+        </div>
       </div>
     </footer>
 
@@ -1241,7 +1261,7 @@ onBeforeUnmount(() => {
   height: 66px;
   padding: 0 8px;
   display: grid;
-  grid-template-columns: 48px 1fr 42px;
+  grid-template-columns: minmax(0, 1fr) 42px;
   align-items: center;
   gap: 8px;
   overflow: hidden;
@@ -1257,8 +1277,29 @@ onBeforeUnmount(() => {
 }
 .launch-pill.installing {
   width: 100%;
-  grid-template-columns: 42px 1fr 38px;
+  grid-template-columns: minmax(0, 1fr) 38px;
   gap: 4px;
+}
+.launch-main-action {
+  position: relative;
+  z-index: 2;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+}
+.launch-pill.installing .launch-main-action {
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 4px;
+}
+.launch-main-action:disabled {
+  cursor: default;
 }
 .launch-pill.installing .play-orb {
   width: 40px;
@@ -1268,7 +1309,7 @@ onBeforeUnmount(() => {
   width: 38px;
   height: 38px;
 }
-.launch-pill:hover:not(:disabled) {
+.launch-pill:has(.launch-main-action:hover:not(:disabled)) {
   transform: translateY(-4px) scale(1.012);
   box-shadow: 0 24px 58px rgba(35, 142, 59, 0.44);
   filter: brightness(1.06);
@@ -1297,13 +1338,13 @@ onBeforeUnmount(() => {
     transform 0.18s var(--ease),
     opacity 0.18s ease;
 }
-.launch-pill.installing:hover:not(:disabled) .play-orb {
+.launch-main-action:hover:not(:disabled) .play-orb {
   transform: scale(1.08);
   background: #ffffff42;
   box-shadow: 0 0 0 5px #ffffff12;
 }
-.launch-pill.installing:hover:not(:disabled) .play-orb :deep(svg) {
-  transform: scale(1.14);
+.launch-main-action:hover:not(:disabled) .play-orb :deep(svg) {
+  animation: action-icon-hover 0.42s var(--ease) both;
 }
 .launch-pill.paused .play-orb {
   animation: resume-pulse 1.35s ease-in-out infinite;
@@ -1316,15 +1357,21 @@ onBeforeUnmount(() => {
   height: 42px;
   cursor: pointer;
 }
+.launch-settings:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
 .launch-settings :deep(svg) {
   transition: transform 0.24s var(--ease);
 }
-.launch-settings:hover :deep(svg) {
+.launch-settings:hover:not(:disabled) :deep(svg) {
   transform: rotate(140deg) scale(1.08);
 }
-.launch-pill > b {
-  position: relative;
-  z-index: 2;
+.launch-main-action > b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .progress {
   position: absolute;
@@ -1670,6 +1717,17 @@ onBeforeUnmount(() => {
   to {
     transform: scale(1.08);
     opacity: 1;
+  }
+}
+@keyframes action-icon-hover {
+  0% {
+    transform: scale(1);
+  }
+  48% {
+    transform: scale(0.82);
+  }
+  100% {
+    transform: scale(1.16);
   }
 }
 @media (max-width: 920px) {

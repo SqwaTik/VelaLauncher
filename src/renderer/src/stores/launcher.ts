@@ -74,6 +74,7 @@ export const useLauncherStore = defineStore("launcher", () => {
   let unsubProgress: (() => void) | null = null;
   let unsubLaunch: (() => void) | null = null;
   let unsubJava: (() => void) | null = null;
+  let pauseRequested = false;
 
   /** Load persisted stats + install status and subscribe to backend events. */
   async function hydrate(): Promise<void> {
@@ -87,25 +88,33 @@ export const useLauncherStore = defineStore("launcher", () => {
     unsubProgress = window.royale.game.onProgress((p: InstallProgress) => {
       installProgress.value = p;
       progress.value = Math.round(p.progress * 100);
-      statusText.value = p.message;
+      if (
+        !pauseRequested ||
+        ["paused", "idle", "error", "done"].includes(p.phase)
+      )
+        statusText.value = p.message;
       if (p.phase === "paused") {
+        pauseRequested = true;
         state.value = "paused";
       } else if (p.phase === "idle") {
+        pauseRequested = false;
         state.value = s.stats.installed ? "installed" : "not-installed";
         installProgress.value = null;
         progress.value = 0;
         statusText.value = "";
         errorText.value = "";
       } else if (p.phase === "error") {
+        pauseRequested = false;
         errorText.value = userFacingError(p.detail || p.message);
         state.value = s.stats.installed ? "installed" : "not-installed";
       } else if (p.phase === "done") {
+        pauseRequested = false;
         state.value = "installed";
         statusText.value = "";
         progress.value = 0;
         void checkUpdate();
       } else {
-        state.value = "downloading";
+        state.value = pauseRequested ? "paused" : "downloading";
       }
     });
 
@@ -155,6 +164,7 @@ export const useLauncherStore = defineStore("launcher", () => {
 
   async function install(): Promise<void> {
     if (state.value === "downloading" || state.value === "paused") return;
+    pauseRequested = false;
     errorText.value = "";
     state.value = "downloading";
     progress.value = 0;
@@ -170,6 +180,7 @@ export const useLauncherStore = defineStore("launcher", () => {
 
   async function pause(): Promise<void> {
     if (state.value !== "downloading" || transportBusy.value) return;
+    pauseRequested = true;
     transportBusy.value = true;
     state.value = "paused";
     statusText.value = "Приостанавливаем загрузку…";
@@ -178,10 +189,12 @@ export const useLauncherStore = defineStore("launcher", () => {
         state.value = "paused";
         statusText.value = "Загрузка приостановлена";
       } else {
+        pauseRequested = false;
         state.value = "downloading";
         statusText.value = "Загрузка продолжается";
       }
     } catch (cause) {
+      pauseRequested = false;
       state.value = "downloading";
       errorText.value = userFacingError(cause);
     } finally {
@@ -191,6 +204,7 @@ export const useLauncherStore = defineStore("launcher", () => {
 
   async function resume(): Promise<void> {
     if (state.value !== "paused" || transportBusy.value) return;
+    pauseRequested = false;
     transportBusy.value = true;
     state.value = "downloading";
     statusText.value = "Продолжаем загрузку…";
@@ -199,10 +213,12 @@ export const useLauncherStore = defineStore("launcher", () => {
         state.value = "downloading";
         statusText.value = "Загрузка продолжена";
       } else {
+        pauseRequested = true;
         state.value = "paused";
         statusText.value = "Загрузка приостановлена";
       }
     } catch (cause) {
+      pauseRequested = true;
       state.value = "paused";
       errorText.value = userFacingError(cause);
     } finally {
@@ -212,9 +228,25 @@ export const useLauncherStore = defineStore("launcher", () => {
 
   async function cancel(): Promise<void> {
     if (!["downloading", "paused"].includes(state.value)) return;
+    const previousState = state.value;
+    pauseRequested = false;
+    transportBusy.value = true;
     errorText.value = "";
-    statusText.value = "Отмена установки…";
-    await window.royale.game.cancel();
+    statusText.value = "Останавливаем установку…";
+    try {
+      await window.royale.game.cancel();
+      const persisted = await window.royale.state.get();
+      state.value = persisted.stats.installed ? "installed" : "not-installed";
+      installProgress.value = null;
+      progress.value = 0;
+      statusText.value = "";
+    } catch (cause) {
+      pauseRequested = previousState === "paused";
+      state.value = previousState;
+      errorText.value = userFacingError(cause);
+    } finally {
+      transportBusy.value = false;
+    }
   }
 
   async function checkUpdate(): Promise<void> {

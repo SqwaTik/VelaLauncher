@@ -37,7 +37,7 @@ import { setDiscordActivity } from "./discord";
 
 const execAsync = promisify(exec);
 const USER_AGENT = "SqwaTik/RoyaleLauncher";
-const FABRIC_API_PROJECT = "P7dR8mSHy";
+const FABRIC_API_PROJECT = "P7dR8mSH";
 
 let currentTask: Task<unknown> | null = null;
 let buildProcess: ChildProcess | null = null;
@@ -62,6 +62,7 @@ function report(
   detail?: string,
   extra?: Partial<InstallProgress>,
 ): void {
+  if (cancelRequested && phase !== "idle" && phase !== "error") return;
   const normalized = Math.min(1, Math.max(0, progress));
   const monotonic =
     phase === "idle" || phase === "done" || phase === "error"
@@ -168,58 +169,37 @@ export async function checkClientUpdate(): Promise<ClientUpdateInfo> {
   return (await remoteClientInfo()).update;
 }
 
-function taskPhase(task: Task<unknown>): {
-  phase: InstallPhase;
-  start: number;
-  span: number;
-  label: string;
-} {
-  const text =
-    `${task.name} ${task.path} ${task.from ?? ""} ${task.to ?? ""}`.toLowerCase();
-  if (text.includes("asset") || text.includes("objects"))
-    return {
-      phase: "assets",
-      start: 0.42,
-      span: 0.28,
-      label: "Загрузка ассетов",
-    };
-  if (text.includes("librar"))
-    return {
-      phase: "libraries",
-      start: 0.24,
-      span: 0.18,
-      label: "Загрузка библиотек",
-    };
-  return {
-    phase: "client",
-    start: 0.08,
-    span: 0.16,
-    label: `Загрузка Minecraft ${GAME.minecraftVersion}`,
-  };
-}
-
-function minecraftTaskContext(onActivity?: () => void): TaskContext {
+function minecraftTaskContext(
+  rootTask: Task<unknown>,
+  onActivity?: () => void,
+): TaskContext {
   let lastBytes = 0;
   let lastAt = Date.now();
   let speed = 0;
+  let detail = "Файлы игры";
+  let detailChangedAt = 0;
   return {
     onUpdate(task) {
+      if (cancelRequested) return;
       onActivity?.();
-      const mapped = taskPhase(task);
-      const total = Math.max(0, task.total);
-      const written = Math.max(0, task.progress);
       const now = Date.now();
+      const total = Math.max(0, rootTask.total);
+      const written = Math.max(0, rootTask.progress);
       if (now - lastAt > 300) {
         speed = Math.max(0, (written - lastBytes) / ((now - lastAt) / 1000));
         lastBytes = written;
         lastAt = now;
       }
+      if (task.to && now - detailChangedAt > 450) {
+        detail = task.to;
+        detailChangedAt = now;
+      }
       const fraction = total > 0 ? Math.min(1, written / total) : 0.1;
       report(
-        mapped.phase,
-        mapped.start + mapped.span * fraction,
-        mapped.label,
-        task.to ?? task.name,
+        "client",
+        0.08 + 0.62 * fraction,
+        `Загрузка файлов Minecraft ${GAME.minecraftVersion}`,
+        detail,
         {
           downloadedBytes: written,
           totalBytes: total,
@@ -238,6 +218,7 @@ function minecraftTaskContext(onActivity?: () => void): TaskContext {
       );
     },
     onResumed() {
+      if (cancelRequested) return;
       onActivity?.();
       emitProgress({
         ...lastProgress,
@@ -267,6 +248,7 @@ async function runDownload(
     pendingFile: `${destination}.part`,
     headers: { "User-Agent": USER_AGENT },
     progressController: (_url, _chunk, written, total) => {
+      if (cancelRequested) return;
       const now = Date.now();
       if (now - lastAt > 300) {
         speed = Math.max(0, (written - lastBytes) / ((now - lastAt) / 1000));
@@ -491,23 +473,29 @@ async function installRoyaleClient(
 }
 
 export async function pauseInstall(): Promise<boolean> {
-  if (!currentTask?.isRunning) return false;
-  await currentTask.pause();
-  return true;
+  const task = currentTask;
+  if (!task?.isRunning) return false;
+  await task.pause();
+  return task.isPaused;
 }
 
 export async function resumeInstall(): Promise<boolean> {
-  if (!currentTask?.isPaused) return false;
-  await currentTask.resume();
-  return true;
+  const task = currentTask;
+  if (!task?.isPaused) return false;
+  await task.resume();
+  return task.isRunning;
 }
 
 export async function cancelInstall(): Promise<boolean> {
-  const hadActiveInstall = Boolean(currentTask || buildProcess);
+  const task = currentTask;
+  const process = buildProcess;
+  const hadActiveInstall = Boolean(task || process);
   cancelRequested = true;
-  if (currentTask && !currentTask.isDone)
-    await currentTask.cancel().catch(() => undefined);
-  if (buildProcess) buildProcess.kill();
+  currentTask = null;
+  buildProcess = null;
+  if (task?.isPaused) await task.resume().catch(() => undefined);
+  if (task && !task.isDone) await task.cancel(1_200).catch(() => undefined);
+  if (process) process.kill();
   return hadActiveInstall;
 }
 
@@ -591,7 +579,7 @@ export async function installGame(): Promise<void> {
       }, 5_000);
       try {
         resolved = await task.startAndWait(
-          minecraftTaskContext(() => {
+          minecraftTaskContext(task, () => {
             lastActivity = Date.now();
           }),
         );
@@ -682,7 +670,6 @@ export async function installGame(): Promise<void> {
       /отмен/i.test(message)
     ) {
       report("idle", 0, "Установка отменена");
-      cancelRequested = false;
       return;
     } else {
       report("error", lastProgress.progress, "Ошибка установки", message);

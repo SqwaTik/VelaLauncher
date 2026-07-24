@@ -72,6 +72,10 @@ async function api<T>(
   if (cached && cached.expires > Date.now()) return cached.value as T;
 
   const response = await fetchWithRetry(url);
+  if (response.status === 404)
+    throw new Error(
+      "Проект или версия больше не найдены на Modrinth. Обновите каталог и выберите доступную версию.",
+    );
   if (!response.ok)
     throw new Error(`Modrinth ${response.status}: ${response.statusText}`);
   const value = (await response.json()) as T;
