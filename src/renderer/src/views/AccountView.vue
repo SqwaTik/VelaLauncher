@@ -14,6 +14,7 @@ const settingsStore = useSettingsStore();
 const { tr } = useLocale();
 const showAddAccount = ref(false);
 const showEditor = ref(false);
+const profilesOpen = ref(false);
 const offlineName = ref("");
 const addMode = ref<"offline" | "ely" | "littleskin">("offline");
 const elyUsername = ref("");
@@ -30,7 +31,7 @@ const shortUuid = computed(() =>
 );
 
 function addOffline(): void {
-  if (!offlineName.value.trim()) return;
+  if (!offlineName.value.trim() || !account.canAddAccount) return;
   account.addOffline(offlineName.value);
   offlineName.value = "";
   showAddAccount.value = false;
@@ -42,6 +43,11 @@ function providerName(type?: string): string {
   return type
     ? tr("Автономный профиль", "Offline profile", "Perfil sin conexión")
     : tr("Профиль не выбран", "No profile selected", "Perfil no seleccionado");
+}
+function selectProfile(id: string): void {
+  profilesOpen.value = false;
+  if (id === account.activeId) return;
+  window.setTimeout(() => account.select(id), 145);
 }
 async function addEly(): Promise<void> {
   if (!elyUsername.value.trim() || !elyPassword.value) return;
@@ -94,7 +100,7 @@ function confirmRemove(dontAsk: boolean): void {
 </script>
 
 <template>
-  <div class="account-page">
+  <div class="account-page" @click="profilesOpen = false">
     <header class="page-head">
       <div>
         <p class="eyebrow">
@@ -121,19 +127,108 @@ function confirmRemove(dontAsk: boolean): void {
           }}
         </p>
       </div>
-      <button class="btn btn-primary" @click="showAddAccount = true">
-        <Icon name="plus" :size="17" />{{
-          tr("Добавить профиль", "Add profile", "Añadir perfil")
-        }}
-      </button>
+      <section class="profile-menu" @click.stop>
+        <button
+          class="profile-trigger"
+          :class="{ open: profilesOpen }"
+          @click="profilesOpen = !profilesOpen"
+        >
+          <Transition name="profile-swap" mode="out-in">
+            <span
+              :key="account.active?.id || 'empty'"
+              class="profile-current"
+            >
+              <img
+                v-if="account.active"
+                :src="account.avatarOf(account.active)"
+                alt=""
+              />
+              <span v-else class="empty-avatar"
+                ><Icon name="user" :size="19"
+              /></span>
+              <span class="profile-trigger-copy"
+                ><b>{{
+                  account.active?.username ||
+                  tr("Выбрать профиль", "Choose profile", "Elegir perfil")
+                }}</b
+                ><small>{{ providerName(account.active?.type) }}</small></span
+              >
+            </span>
+          </Transition>
+          <Icon name="chevron" :size="16" class="profile-chevron" />
+        </button>
+        <Transition name="profile-pop">
+          <div v-if="profilesOpen" class="profiles-popover">
+            <header>
+              <div>
+                <h3>{{ tr("Профили", "Profiles", "Perfiles") }}</h3>
+                <span>{{ account.accounts.length }}/6</span>
+              </div>
+              <button
+                class="icon-button"
+                :disabled="!account.canAddAccount"
+                :title="
+                  account.canAddAccount
+                    ? 'Добавить'
+                    : 'Достигнут лимит: 6 аккаунтов'
+                "
+                @click="
+                  if (account.canAddAccount) {
+                    profilesOpen = false;
+                    showAddAccount = true;
+                  }
+                "
+              >
+                <Icon name="plus" :size="17" />
+              </button>
+            </header>
+            <div v-if="account.accounts.length" class="account-list">
+              <button
+                v-for="item in account.accounts"
+                :key="item.id"
+                :class="{ active: item.id === account.activeId }"
+                @click="selectProfile(item.id)"
+              >
+                <img :src="account.avatarOf(item)" alt="" loading="lazy" /><span
+                  ><b>{{ item.username }}</b
+                  ><small>{{ providerName(item.type) }}</small></span
+                ><i class="selected-dot" /><span
+                  class="remove"
+                  title="Удалить"
+                  @click.stop="askRemove(item.id)"
+                  ><Icon name="trash" :size="14"
+                /></span>
+              </button>
+            </div>
+            <button
+              v-else
+              class="first-account"
+              @click="
+                profilesOpen = false;
+                showAddAccount = true;
+              "
+            >
+              <Icon name="plus" :size="18" />{{
+                tr(
+                  "Создать первый профиль",
+                  "Create first profile",
+                  "Crear primer perfil",
+                )
+              }}
+            </button>
+          </div>
+        </Transition>
+      </section>
     </header>
 
-    <div class="account-layout">
+    <Transition name="profile-page-swap" mode="out-in">
+      <div :key="account.active?.id || 'empty'" class="account-layout">
       <aside class="profile-column">
         <section class="identity-card">
           <div class="skin-stage">
             <span class="skin-glow" /><SkinPreview3D
               :skin="account.skinSource"
+              :cape="account.capeSource"
               :model="skinModel"
             />
           </div>
@@ -159,50 +254,90 @@ function confirmRemove(dontAsk: boolean): void {
               tr("Редактировать скин", "Edit skin", "Editar skin")
             }}</span>
           </button>
+
+          <div v-if="account.active" class="cape-wardrobe">
+            <header>
+              <h3>
+                {{ tr("ИЗМЕНИТЬ ПЛАЩ", "CHANGE CAPE", "CAMBIAR CAPA") }}
+              </h3>
+              <span>{{ account.customCapes.length }}/5</span>
+            </header>
+            <div class="cape-list">
+              <button
+                class="cape-tile no-cape"
+                :class="{
+                  active:
+                    !account.activeCustomCape &&
+                    !account.appearance?.capes.some(
+                      (cape) => cape.state === 'ACTIVE',
+                    ),
+                }"
+                :title="
+                  tr('Без локального плаща', 'No local cape', 'Sin capa local')
+                "
+                @click="account.disableCape()"
+              >
+                <Icon name="close" :size="15" />
+              </button>
+              <button
+                v-for="cape in account.appearance?.capes ?? []"
+                :key="`official-${cape.id}`"
+                class="cape-tile"
+                :class="{
+                  active: !account.activeCustomCape && cape.state === 'ACTIVE',
+                }"
+                :disabled="account.active?.type !== 'microsoft'"
+                :title="
+                  account.active?.type === 'microsoft'
+                    ? tr(
+                        'Выбрать официальный плащ',
+                        'Select official cape',
+                        'Elegir capa oficial',
+                      )
+                    : tr(
+                        'Плащ этого сервиса доступен для просмотра',
+                        'This service cape is available for preview',
+                        'La capa de este servicio está disponible como vista previa',
+                      )
+                "
+                @click="account.selectCape(cape.id)"
+              >
+                <img :src="cape.url" :alt="cape.alias" />
+              </button>
+              <button
+                v-for="cape in account.customCapes"
+                :key="cape.id"
+                class="cape-tile"
+                :class="{ active: account.activeCustomCape?.id === cape.id }"
+                :title="
+                  tr(
+                    'Нажмите, чтобы выбрать или заменить. ПКМ — удалить',
+                    'Click to select or replace. Right-click to remove',
+                    'Clic para elegir o reemplazar. Clic derecho para eliminar',
+                  )
+                "
+                @click="account.editCustomCape(cape.id)"
+                @contextmenu.prevent="account.removeCustomCape(cape.id)"
+              >
+                <img :src="cape.dataUrl" :alt="cape.name" />
+              </button>
+              <button
+                v-if="account.customCapes.length < 5"
+                class="cape-tile add-cape"
+                :title="
+                  tr('Загрузить PNG-плащ', 'Upload PNG cape', 'Subir capa PNG')
+                "
+                @click="account.addCustomCape()"
+              >
+                <Icon name="plus" :size="17" />
+              </button>
+            </div>
+            <p v-if="account.appearanceError" class="cape-error">
+              <Icon name="alert" :size="13" />{{ account.appearanceError }}
+            </p>
+          </div>
         </section>
 
-        <section class="accounts-panel">
-          <header>
-            <div>
-              <h3>{{ tr("Профили", "Profiles", "Perfiles") }}</h3>
-              <span>{{ account.accounts.length }}</span>
-            </div>
-            <button
-              class="icon-button"
-              title="Добавить"
-              @click="showAddAccount = true"
-            >
-              <Icon name="plus" :size="17" />
-            </button>
-          </header>
-          <div v-if="account.accounts.length" class="account-list">
-            <button
-              v-for="item in account.accounts"
-              :key="item.id"
-              :class="{ active: item.id === account.activeId }"
-              @click="account.select(item.id)"
-            >
-              <img :src="account.avatarOf(item)" alt="" loading="lazy" /><span
-                ><b>{{ item.username }}</b
-                ><small>{{ providerName(item.type) }}</small></span
-              ><i class="selected-dot" /><span
-                class="remove"
-                title="Удалить"
-                @click.stop="askRemove(item.id)"
-                ><Icon name="trash" :size="14"
-              /></span>
-            </button>
-          </div>
-          <button v-else class="first-account" @click="showAddAccount = true">
-            <Icon name="plus" :size="18" />{{
-              tr(
-                "Создать первый профиль",
-                "Create first profile",
-                "Crear primer perfil",
-              )
-            }}
-          </button>
-        </section>
       </aside>
 
       <main class="appearance-column">
@@ -211,22 +346,14 @@ function confirmRemove(dontAsk: boolean): void {
             <p class="eyebrow">Skin Studio 3D</p>
             <h2>
               {{
-                tr(
-                  "Весь скин, а не только лицо",
-                  "The full skin, not just the face",
-                  "El skin completo, no solo la cara",
-                )
+                tr("Редактирование скина", "Skin editing", "Edición de skins")
               }}
             </h2>
             <p>
-              Вращайте модель, приближайте колёсиком, проверяйте маску, куртку,
-              рукава и штанины. В редакторе доступны оба слоя текстуры.
+              Рисуйте прямо на 3D-модели или текстуре 64×64, переключайте
+              основной и внешний слои, меняйте Classic/Slim и сохраняйте PNG без
+              потери качества.
             </p>
-            <div class="feature-row">
-              <span><Icon name="rotate3d" :size="15" />Свободное вращение</span
-              ><span><Icon name="layers" :size="15" />Внешний слой</span
-              ><span><Icon name="palette" :size="15" />Палитра</span>
-            </div>
           </div>
           <button class="editor-button" @click="showEditor = true">
             <span><Icon name="brush" :size="22" /></span>
@@ -281,7 +408,8 @@ function confirmRemove(dontAsk: boolean): void {
           </div>
         </section>
       </main>
-    </div>
+      </div>
+    </Transition>
 
     <Teleport to="body"
       ><Transition name="modal"
@@ -337,7 +465,10 @@ function confirmRemove(dontAsk: boolean): void {
                 maxlength="16"
                 placeholder="Имя игрока"
                 autofocus
-              /><button class="btn btn-primary" :disabled="!offlineName.trim()">
+              /><button
+                class="btn btn-primary"
+                :disabled="!offlineName.trim() || !account.canAddAccount"
+              >
                 <Icon name="plus" :size="16" />Добавить
               </button>
             </form>
@@ -367,7 +498,10 @@ function confirmRemove(dontAsk: boolean): void {
               /><button
                 class="btn btn-primary"
                 :disabled="
-                  account.elyBusy || !elyUsername.trim() || !elyPassword
+                  !account.canAddAccount ||
+                  account.elyBusy ||
+                  !elyUsername.trim() ||
+                  !elyPassword
                 "
               >
                 <Icon
@@ -398,6 +532,7 @@ function confirmRemove(dontAsk: boolean): void {
               ><button
                 class="btn btn-primary"
                 :disabled="
+                  !account.canAddAccount ||
                   account.littleSkinBusy ||
                   !littleSkinUsername.trim() ||
                   !littleSkinPassword
@@ -421,6 +556,9 @@ function confirmRemove(dontAsk: boolean): void {
             >
               <Icon name="alert" :size="14" />{{ account.littleSkinError }}
             </p>
+            <p v-if="account.accountLimitError" class="auth-error">
+              <Icon name="alert" :size="14" />{{ account.accountLimitError }}
+            </p>
             <p v-if="addMode === 'offline'" class="offline-note">
               <Icon name="shield" :size="15" />Официальные серверы и Realms
               требуют лицензионную авторизацию.
@@ -442,20 +580,25 @@ function confirmRemove(dontAsk: boolean): void {
 
 <style scoped lang="scss">
 .account-page {
+  position: relative;
+  width: 100%;
+  min-width: 0;
   max-width: 1180px;
   margin: 0 auto;
-  padding: 28px 30px 56px;
+  padding: 28px clamp(18px, 3vw, 30px) 56px clamp(28px, 3.6vw, 42px);
+  overflow-x: hidden;
 }
 .page-head {
   margin-bottom: 23px;
   display: flex;
-  align-items: flex-end;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 22px;
 }
 .page-head h1 {
   margin-top: 3px;
-  font-size: 27px;
+  font-size: clamp(24px, 3vw, 30px);
+  overflow-wrap: anywhere;
 }
 .page-head > div > p:last-child {
   margin-top: 6px;
@@ -546,24 +689,223 @@ function confirmRemove(dontAsk: boolean): void {
   transform: translateY(-2px);
   box-shadow: var(--glow-green);
 }
-.accounts-panel {
-  padding: 12px;
+.cape-wardrobe {
+  margin-top: 2px;
+  padding: 11px 12px 13px;
+  border-top: 1px solid var(--hairline);
+  background: rgba(255, 255, 255, 0.012);
 }
-.accounts-panel > header {
-  padding: 2px 3px 10px;
+.cape-wardrobe > header {
+  padding: 0 2px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.cape-wardrobe h3 {
+  color: var(--text-3);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+.cape-wardrobe header span {
+  color: var(--text-3);
+  font: 8px var(--font-num);
+}
+.cape-list {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.cape-list::-webkit-scrollbar {
+  display: none;
+}
+.cape-tile {
+  position: relative;
+  width: 42px;
+  min-width: 42px;
+  height: 56px;
+  padding: 4px;
+  display: grid;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  color: var(--text-3);
+  background: var(--surface-2);
+}
+.cape-tile:hover {
+  transform: translateY(-1px);
+  color: var(--text-1);
+  border-color: var(--hairline-strong);
+}
+.cape-tile.active {
+  color: var(--green);
+  border-color: var(--green-line);
+  background: var(--green-soft);
+  box-shadow: inset 0 0 0 1px rgba(83, 195, 106, 0.08);
+}
+.cape-tile img {
+  width: 34px;
+  height: 46px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+.add-cape {
+  border-style: dashed;
+  color: var(--green);
+}
+.no-cape {
+  color: var(--text-3);
+}
+.cape-error {
+  margin-top: 8px;
+  padding: 7px 8px;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  border-radius: 8px;
+  color: var(--danger);
+  background: rgba(255, 93, 108, 0.09);
+  font-size: 8px;
+  line-height: 1.4;
+}
+.profile-menu {
+  position: relative;
+  z-index: 40;
+  flex: 0 0 270px;
+  width: 270px;
+}
+.profile-trigger {
+  width: 100%;
+  height: 58px;
+  padding: 7px 9px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: 14px;
+  color: var(--text-2);
+  background: rgba(17, 23, 19, 0.9);
+  border: 1px solid var(--hairline);
+  text-align: left;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.22);
+}
+.profile-trigger:hover,
+.profile-trigger.open {
+  color: var(--text-0);
+  border-color: var(--hairline-strong);
+  background: rgba(23, 31, 25, 0.96);
+}
+.profile-current {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  gap: 10px;
+}
+.profile-current > img,
+.empty-avatar {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  border-radius: 10px;
+  background: var(--surface-3);
+  image-rendering: pixelated;
+}
+.profile-current > img {
+  display: block;
+  object-fit: cover;
+}
+.empty-avatar {
+  color: var(--text-3);
+}
+.profile-trigger-copy {
+  min-width: 0;
+  flex: 1;
+}
+.profile-trigger-copy b,
+.profile-trigger-copy small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.profile-trigger-copy b {
+  color: var(--text-0);
+  font-size: 11px;
+}
+.profile-trigger-copy small {
+  margin-top: 3px;
+  color: var(--text-3);
+  font-size: 8.5px;
+}
+.profile-chevron {
+  flex: none;
+  transition: transform 0.18s var(--ease);
+}
+.profile-trigger.open .profile-chevron {
+  transform: rotate(90deg);
+}
+.profile-swap-enter-active,
+.profile-swap-leave-active {
+  transition:
+    opacity 0.13s ease,
+    transform 0.16s var(--ease);
+}
+.profile-swap-enter-from {
+  opacity: 0;
+  transform: translateY(5px);
+}
+.profile-swap-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+.profile-page-swap-enter-active,
+.profile-page-swap-leave-active {
+  transition:
+    opacity 0.18s var(--ease),
+    transform 0.2s var(--ease);
+}
+.profile-page-swap-enter-from {
+  opacity: 0;
+  transform: translateY(7px);
+}
+.profile-page-swap-leave-to {
+  opacity: 0;
+  transform: translateY(-5px);
+}
+.profiles-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 100;
+  width: 100%;
+  max-height: min(330px, calc(100vh - 150px));
+  padding: 9px;
+  overflow: hidden;
+  border-radius: 14px;
+  background: rgba(17, 23, 19, 0.98);
+  border: 1px solid var(--hairline-strong);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.56);
+  backdrop-filter: blur(22px);
+}
+.profiles-popover > header {
+  padding: 1px 3px 6px;
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
-.accounts-panel > header > div {
+.profiles-popover > header > div {
   display: flex;
   align-items: center;
   gap: 7px;
 }
-.accounts-panel h3 {
-  font-size: 13px;
+.profiles-popover h3 {
+  font-size: 11px;
 }
-.accounts-panel header div > span {
+.profiles-popover header div > span {
   min-width: 21px;
   height: 18px;
   padding: 0 6px;
@@ -575,15 +917,17 @@ function confirmRemove(dontAsk: boolean): void {
   font-size: 8px;
 }
 .account-list {
+  max-height: 250px;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 3px;
+  overflow-y: auto;
 }
 .account-list > button {
   position: relative;
   width: 100%;
-  height: 54px;
-  padding: 5px 7px;
+  height: 46px;
+  padding: 4px 6px;
   display: flex;
   align-items: center;
   gap: 9px;
@@ -598,9 +942,9 @@ function confirmRemove(dontAsk: boolean): void {
   background: var(--green-soft);
 }
 .account-list img {
-  width: 38px;
-  height: 38px;
-  border-radius: 9px;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
   image-rendering: pixelated;
 }
 .account-list > button > span:nth-child(2) {
@@ -651,10 +995,31 @@ function confirmRemove(dontAsk: boolean): void {
 .first-account {
   width: 100%;
   height: 48px;
+  padding: 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   border-radius: 10px;
   color: var(--green);
   background: var(--green-soft);
   font-size: 10.5px;
+  text-align: center;
+}
+.first-account :deep(svg) {
+  flex: none;
+}
+.profile-pop-enter-active,
+.profile-pop-leave-active {
+  transition:
+    opacity 0.16s ease,
+    transform 0.18s var(--ease);
+  transform-origin: top right;
+}
+.profile-pop-enter-from,
+.profile-pop-leave-to {
+  opacity: 0;
+  transform: translateY(-6px) scale(0.98);
 }
 .studio-hero {
   padding: 22px;
@@ -1056,9 +1421,24 @@ function confirmRemove(dontAsk: boolean): void {
 .modal-leave-to .account-modal {
   transform: translateY(24px) scale(0.97);
 }
-@media (max-width: 880px) {
+@media (max-width: 980px) {
+  .page-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .profile-menu {
+    flex: none;
+    width: 100%;
+  }
+  .profiles-popover {
+    right: 0;
+    width: min(320px, 100%);
+  }
+  .account-list {
+    max-height: 150px;
+  }
   .account-layout {
-    grid-template-columns: 260px minmax(0, 1fr);
+    grid-template-columns: 1fr;
   }
   .studio-hero {
     align-items: stretch;
@@ -1073,12 +1453,8 @@ function confirmRemove(dontAsk: boolean): void {
   }
 }
 @media (max-width: 680px) {
-  .account-layout {
-    grid-template-columns: 1fr;
-  }
   .profile-column {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
+    display: flex;
   }
   .page-head {
     align-items: flex-start;

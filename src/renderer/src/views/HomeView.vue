@@ -7,6 +7,10 @@ import { GAME } from "@shared/constants";
 import { useLauncherStore } from "@/stores/launcher";
 import { useAccountStore } from "@/stores/account";
 import { useSettingsStore } from "@/stores/settings";
+import { useModsStore } from "@/stores/mods";
+import { useResourcesStore } from "@/stores/resources";
+import { useShadersStore } from "@/stores/shaders";
+import { useInstancesStore } from "@/stores/instances";
 import generatedLogo from "@/assets/images/royale-logo-transparent.png";
 import { useLocale } from "@/composables/useLocale";
 
@@ -14,10 +18,14 @@ const router = useRouter();
 const launcher = useLauncherStore();
 const account = useAccountStore();
 const settings = useSettingsStore();
+const mods = useModsStore();
+const resources = useResourcesStore();
+const shaders = useShadersStore();
+const instances = useInstancesStore();
 const { tr } = useLocale();
 const slide = ref(0);
 const galleryHovered = ref(false);
-const contentTab = ref<"content" | "updates">("content");
+const galleryExpanded = ref(false);
 const logoYaw = ref(0);
 const logoPitch = ref(0);
 const logoDragging = ref(false);
@@ -30,13 +38,31 @@ let contentRefreshTimer: ReturnType<typeof setInterval> | null = null;
 
 const busy = computed(
   () =>
-    ["launching", "running"].includes(launcher.state) ||
+    launcher.state === "running" ||
     (launcher.state === "downloading" &&
       launcher.installProgress?.canPause === false) ||
     account.refreshing,
 );
 const gallery = computed(() => settings.screenshotUrls);
 const currentSlide = computed(() => gallery.value[slide.value] ?? null);
+const modPreview = computed(() => mods.installed.slice(0, 4));
+const resourcePreview = computed(() => resources.installed.slice(0, 4));
+const shaderPreview = computed(() =>
+  shaders.installed.slice(0, settings.content.shaderPacks > 8 ? 7 : 8),
+);
+const worldPreview = computed(() =>
+  settings.content.worldItems.slice(0, settings.content.worlds > 8 ? 7 : 8),
+);
+const instanceTitle = computed(() => {
+  const words = (instances.active?.name || "Royale Master")
+    .trim()
+    .split(/\s+/);
+  if (words.length === 1) return { base: words[0], accent: "" };
+  return {
+    base: words.slice(0, -1).join(" "),
+    accent: words.at(-1) ?? "",
+  };
+});
 const logoStyle = computed(() => ({
   transform: `rotateX(${logoPitch.value}deg) rotateY(${logoYaw.value}deg)`,
 }));
@@ -47,15 +73,19 @@ const actionLabel = computed(() => {
     launcher.state === "downloading" &&
     launcher.installProgress?.canPause === false
   )
-    return launcher.installProgress?.phase === "build"
-      ? tr("Сборка клиента…", "Building client…", "Compilando cliente…")
-      : `${Math.floor(launcher.progress)}%`;
+    return (
+      launcher.statusText ||
+      tr("Подготовка файлов…", "Preparing files…", "Preparando archivos…")
+    );
   if (launcher.state === "not-installed")
     return tr("Установить", "Install", "Instalar");
   if (launcher.state === "downloading")
-    return `${tr("Пауза", "Pause", "Pausa")} · ${Math.floor(launcher.progress)}%`;
-  if (launcher.state === "launching" || account.refreshing)
-    return tr("Подготовка…", "Preparing…", "Preparando…");
+    return (
+      launcher.statusText || tr("Загрузка…", "Downloading…", "Descargando…")
+    );
+  if (launcher.state === "launching")
+    return tr("Остановить запуск", "Stop launch", "Detener inicio");
+  if (account.refreshing) return tr("Подготовка…", "Preparing…", "Preparando…");
   if (launcher.state === "running")
     return tr("Игра запущена", "Game is running", "Juego iniciado");
   if (launcher.updateInfo?.available)
@@ -68,19 +98,37 @@ const actionIcon = computed(() =>
   launcher.state === "paused"
     ? "play"
     : launcher.state === "downloading"
-      ? "pause"
+      ? launcher.installProgress?.canPause === false
+        ? "spinner"
+        : "pause"
       : launcher.state === "not-installed" || launcher.updateInfo?.available
         ? "download"
-        : launcher.state === "running"
-          ? "check"
-          : !account.active
-            ? "user"
-            : "play",
+        : launcher.state === "launching"
+          ? "stop"
+          : launcher.state === "running"
+            ? "check"
+            : !account.active
+              ? "user"
+              : "play",
 );
+const actionSecondary = computed(() => {
+  if (["downloading", "paused"].includes(launcher.state)) {
+    const parts = [`${Math.floor(launcher.progress)}%`];
+    if (launcher.installProgress?.bytesPerSecond)
+      parts.push(`${formatBytes(launcher.installProgress.bytesPerSecond)}/с`);
+    return parts.join(" · ");
+  }
+  if (launcher.state === "launching" || account.refreshing)
+    return launcher.statusText;
+  if (launcher.updateInfo?.available)
+    return `Royale Master ${launcher.updateInfo.remoteVersion}`;
+  return "";
+});
 
 function launch(): void {
   if (launcher.state === "downloading") void launcher.pause();
   else if (launcher.state === "paused") void launcher.resume();
+  else if (launcher.state === "launching") void launcher.stopLaunch();
   else if (launcher.state === "not-installed" || launcher.updateInfo?.available)
     void launcher.install();
   else if (launcher.state === "installed" && !account.active)
@@ -135,8 +183,31 @@ function moveSlide(direction: number): void {
   slide.value =
     (slide.value + direction + gallery.value.length) % gallery.value.length;
 }
+function russianCount(
+  count: number,
+  one: string,
+  few: string,
+  many: string,
+): string {
+  const tens = count % 100;
+  const units = count % 10;
+  const word =
+    tens >= 11 && tens <= 14
+      ? many
+      : units === 1
+        ? one
+        : units >= 2 && units <= 4
+          ? few
+          : many;
+  return `${count} ${word}`;
+}
 onMounted(() => {
   void settings.refreshGameContent();
+  void Promise.allSettled([
+    mods.loadInstalled(),
+    resources.loadInstalled(),
+    shaders.loadInstalled(),
+  ]);
   void window.royale.discord.activity("В главном меню");
   carouselTimer = setInterval(() => {
     if (!galleryHovered.value) moveSlide(1);
@@ -159,38 +230,45 @@ onBeforeUnmount(() => {
   <div class="home">
     <RouterLink to="/account" class="profile-chip">
       <span class="avatar"
-        ><img v-if="account.active" :src="account.avatar" alt="" /><Icon
-          v-else
-          name="user"
-          :size="19"
+        ><img
+          v-if="account.active && !settings.settings?.streamerMode"
+          :src="account.avatar"
+          alt="" /><Icon v-else name="user" :size="19"
       /></span>
       <span class="profile-copy"
         ><b>{{
-          account.active?.username ||
-          tr("Добавить аккаунт", "Add account", "Añadir cuenta")
+          settings.settings?.streamerMode && account.active
+            ? tr("Профиль скрыт", "Profile hidden", "Perfil oculto")
+            : account.active?.username ||
+              tr("Добавить аккаунт", "Add account", "Añadir cuenta")
         }}</b
         ><small>{{
-          account.active?.type === "ely"
-            ? "Ely.by"
-            : account.active?.type === "littleskin"
-              ? "LittleSkin"
-              : account.active
-                ? tr(
-                    "Автономный профиль",
-                    "Offline profile",
-                    "Perfil sin conexión",
-                  )
-                : tr(
-                    "Профиль не выбран",
-                    "No profile selected",
-                    "Perfil no seleccionado",
-                  )
+          settings.settings?.streamerMode && account.active
+            ? tr("Режим стримера", "Streamer mode", "Modo streamer")
+            : account.active?.type === "ely"
+              ? "Ely.by"
+              : account.active?.type === "littleskin"
+                ? "LittleSkin"
+                : account.active
+                  ? tr(
+                      "Автономный профиль",
+                      "Offline profile",
+                      "Perfil sin conexión",
+                    )
+                  : tr(
+                      "Профиль не выбран",
+                      "No profile selected",
+                      "Perfil no seleccionado",
+                    )
         }}</small></span
       ><Icon name="chevron" :size="15" />
     </RouterLink>
 
     <main class="instance">
-      <h1>Royale <span>Master</span></h1>
+      <h1>
+        {{ instanceTitle.base }}
+        <span v-if="instanceTitle.accent">{{ instanceTitle.accent }}</span>
+      </h1>
       <p class="instance-description">
         {{
           tr(
@@ -229,82 +307,7 @@ onBeforeUnmount(() => {
       </div>
     </main>
 
-    <section v-if="!gallery.length" class="content-glance">
-      <header class="content-tabs">
-        <button
-          :class="{ active: contentTab === 'content' }"
-          @click="contentTab = 'content'"
-        >
-          {{ tr("Содержимое", "Content", "Contenido") }}
-        </button>
-        <button
-          :class="{ active: contentTab === 'updates' }"
-          @click="contentTab = 'updates'"
-        >
-          {{ tr("Обновления", "Updates", "Actualizaciones") }}
-        </button>
-      </header>
-      <div v-if="contentTab === 'content'" class="content-list">
-        <span
-          ><Icon name="mods" :size="16" /><b
-            >{{ tr("Модов установлено", "Mods installed", "Mods instalados") }}:
-            {{ settings.content.mods }}</b
-          ></span
-        >
-        <span
-          ><Icon name="palette" :size="16" /><b
-            >{{
-              tr("Наборов ресурсов", "Resource packs", "Paquetes de recursos")
-            }}: {{ settings.content.resourcePacks }}</b
-          ></span
-        >
-        <span
-          ><Icon name="sparkles" :size="16" /><b
-            >{{
-              tr("Наборов шейдеров", "Shader packs", "Paquetes de shaders")
-            }}: {{ settings.content.shaderPacks }}</b
-          ></span
-        >
-        <span
-          ><Icon name="globe" :size="16" /><b
-            >{{ tr("Миров", "Worlds", "Mundos") }}:
-            {{ settings.content.worlds }}</b
-          ></span
-        >
-      </div>
-      <div v-else class="update-summary">
-        <Icon
-          :name="launcher.updateInfo?.available ? 'download' : 'check'"
-          :size="24"
-        />
-        <div>
-          <b>{{
-            launcher.updateInfo?.available
-              ? tr(
-                  "Доступно обновление",
-                  "Update available",
-                  "Actualización disponible",
-                )
-              : tr(
-                  "Royale Master актуален",
-                  "Royale Master is up to date",
-                  "Royale Master está actualizado",
-                )
-          }}</b
-          ><small>{{
-            launcher.updateInfo?.commitMessage ||
-            tr(
-              "Последний коммит будет проверен автоматически",
-              "The latest commit is checked automatically",
-              "El último commit se comprueba automáticamente",
-            )
-          }}</small>
-        </div>
-      </div>
-    </section>
-
     <div
-      v-if="!gallery.length"
       class="default-visual"
       :class="{ dragging: logoDragging }"
       role="img"
@@ -323,45 +326,287 @@ onBeforeUnmount(() => {
     </div>
 
     <section
-      v-if="gallery.length"
-      class="gallery-card"
+      class="content-dashboard"
       @mouseenter="galleryHovered = true"
       @mouseleave="galleryHovered = false"
     >
-      <Transition name="gallery" mode="out-in"
-        ><img
-          v-if="currentSlide"
-          :key="currentSlide.url"
-          :src="currentSlide.url"
-          alt="Скриншот Royale Master"
-      /></Transition>
-      <div class="gallery-shade" />
-      <header>
-        <span
-          ><Icon name="gallery" :size="15" />{{
-            tr(
-              "Скриншоты Minecraft",
-              "Minecraft screenshots",
-              "Capturas de Minecraft",
+      <article
+        class="dashboard-card mods-card"
+        @click="router.push('/mods?tab=installed')"
+      >
+        <header>
+          <span
+            ><Icon name="mods" :size="18" />{{
+              tr("Моды", "Mods", "Mods")
+            }}</span
+          >
+          <button
+            title="Открыть установленные моды"
+            @click.stop="router.push('/mods?tab=installed')"
+          >
+            <Icon name="chevron" :size="15" />
+          </button>
+        </header>
+        <div class="card-count">
+          <b>{{ settings.content.mods }}</b>
+          <span>{{
+            russianCount(settings.content.mods, "мод", "мода", "модов").replace(
+              /^\d+\s/,
+              "",
             )
-          }}</span
-        ><b>{{ slide + 1 }} / {{ gallery.length }}</b>
-      </header>
-      <div class="gallery-actions">
-        <button @click="moveSlide(-1)"><Icon name="back" :size="18" /></button
-        ><button @click="moveSlide(1)">
-          <Icon name="chevron" :size="18" />
-        </button>
-      </div>
-      <nav>
-        <button
-          v-for="(_, index) in gallery"
-          :key="index"
-          :class="{ active: index === slide }"
-          @click="slide = index"
-        />
-      </nav>
+          }}</span>
+        </div>
+        <div class="content-icons" aria-label="Установленные моды">
+          <span
+            v-for="item in modPreview"
+            :key="item.filename"
+            :title="item.title || item.filename"
+          >
+            <img v-if="item.iconUrl" :src="item.iconUrl" alt="" />
+            <Icon v-else name="mods" :size="13" />
+          </span>
+          <b v-if="settings.content.mods > modPreview.length">
+            +{{ settings.content.mods - modPreview.length }}
+          </b>
+        </div>
+      </article>
+
+      <article class="dashboard-card worlds-card">
+        <header>
+          <span
+            ><Icon name="globe" :size="18" />{{
+              tr("Миры", "Worlds", "Mundos")
+            }}</span
+          >
+        </header>
+        <div class="card-count">
+          <b>{{ settings.content.worlds }}</b
+          ><span>{{
+            russianCount(
+              settings.content.worlds,
+              "мир",
+              "мира",
+              "миров",
+            ).replace(/^\d+\s/, "")
+          }}</span>
+        </div>
+        <div class="content-icons compact" aria-label="Миры">
+          <span
+            v-for="item in worldPreview"
+            :key="item.name"
+            :title="item.name"
+          >
+            <img v-if="item.iconDataUrl" :src="item.iconDataUrl" alt="" />
+            <Icon v-else name="globe" :size="12" />
+          </span>
+          <b v-if="settings.content.worlds > worldPreview.length">
+            +{{ settings.content.worlds - worldPreview.length }}
+          </b>
+        </div>
+      </article>
+
+      <article
+        class="dashboard-card shaders-card"
+        @click="router.push('/shaders?tab=installed')"
+      >
+        <header>
+          <span
+            ><Icon name="sparkles" :size="18" />{{
+              tr("Шейдеры", "Shaders", "Shaders")
+            }}</span
+          >
+          <button
+            title="Открыть установленные шейдеры"
+            @click.stop="router.push('/shaders?tab=installed')"
+          >
+            <Icon name="chevron" :size="15" />
+          </button>
+        </header>
+        <div class="card-count">
+          <b>{{ settings.content.shaderPacks }}</b
+          ><span>{{
+            russianCount(
+              settings.content.shaderPacks,
+              "набор",
+              "набора",
+              "наборов",
+            ).replace(/^\d+\s/, "")
+          }}</span>
+        </div>
+        <div class="content-icons compact" aria-label="Установленные шейдеры">
+          <span
+            v-for="item in shaderPreview"
+            :key="item.filename"
+            :title="item.title || item.filename"
+          >
+            <img v-if="item.iconUrl" :src="item.iconUrl" alt="" />
+            <Icon v-else name="sparkles" :size="12" />
+          </span>
+          <b v-if="settings.content.shaderPacks > shaderPreview.length">
+            +{{ settings.content.shaderPacks - shaderPreview.length }}
+          </b>
+        </div>
+      </article>
+
+      <article
+        class="dashboard-card resources-card"
+        @click="router.push('/resources?tab=installed')"
+      >
+        <header>
+          <span
+            ><Icon name="palette" :size="18" />{{
+              tr("Ресурсы", "Resources", "Recursos")
+            }}</span
+          >
+          <button
+            title="Открыть установленные ресурспаки"
+            @click.stop="router.push('/resources?tab=installed')"
+          >
+            <Icon name="chevron" :size="15" />
+          </button>
+        </header>
+        <div class="card-count">
+          <b>{{ settings.content.resourcePacks }}</b
+          ><span>{{
+            russianCount(
+              settings.content.resourcePacks,
+              "набор",
+              "набора",
+              "наборов",
+            ).replace(/^\d+\s/, "")
+          }}</span>
+        </div>
+        <div class="content-icons" aria-label="Установленные ресурспаки">
+          <span
+            v-for="item in resourcePreview"
+            :key="item.filename"
+            :title="item.title || item.filename"
+          >
+            <img v-if="item.iconUrl" :src="item.iconUrl" alt="" />
+            <Icon v-else name="palette" :size="13" />
+          </span>
+          <b v-if="settings.content.resourcePacks > resourcePreview.length">
+            +{{ settings.content.resourcePacks - resourcePreview.length }}
+          </b>
+        </div>
+      </article>
+
+      <article class="dashboard-card screenshots-card">
+        <Transition name="gallery" mode="out-in">
+          <img
+            v-if="currentSlide"
+            :key="currentSlide.url"
+            :src="currentSlide.url"
+            alt="Скриншот Royale Master"
+          />
+        </Transition>
+        <div class="screenshot-shade" />
+        <header>
+          <span
+            ><Icon name="gallery" :size="17" />{{
+              tr("Галерея", "Gallery", "Galería")
+            }}</span
+          >
+          <div>
+            <small v-if="gallery.length"
+              >{{ slide + 1 }} / {{ gallery.length }}</small
+            >
+            <button title="Развернуть галерею" @click="galleryExpanded = true">
+              <Icon name="expand" :size="15" />
+            </button>
+          </div>
+        </header>
+        <div v-if="!gallery.length" class="empty-gallery">
+          <Icon name="gallery" :size="30" />
+          <b>{{
+            tr("Пока нет снимков", "No screenshots yet", "Aún no hay capturas")
+          }}</b>
+        </div>
+        <div v-else class="gallery-actions">
+          <button @click="moveSlide(-1)">
+            <Icon name="back" :size="17" />
+          </button>
+          <button @click="moveSlide(1)">
+            <Icon name="chevron" :size="17" />
+          </button>
+        </div>
+        <nav v-if="gallery.length > 1">
+          <button
+            v-for="(_, index) in gallery"
+            :key="index"
+            :class="{ active: index === slide }"
+            @click="slide = index"
+          />
+        </nav>
+      </article>
     </section>
+
+    <Teleport to="body">
+      <Transition name="gallery-modal">
+        <div
+          v-if="galleryExpanded"
+          class="gallery-lightbox"
+          @click.self="galleryExpanded = false"
+        >
+          <section>
+            <header>
+              <div>
+                <Icon name="gallery" :size="19" />
+                <span
+                  ><b>{{
+                    tr(
+                      "Галерея скриншотов",
+                      "Screenshot gallery",
+                      "Galería de capturas",
+                    )
+                  }}</b
+                  ><small v-if="gallery.length"
+                    >{{ slide + 1 }} / {{ gallery.length }}</small
+                  ></span
+                >
+              </div>
+              <button title="Закрыть" @click="galleryExpanded = false">
+                <Icon name="close" :size="19" />
+              </button>
+            </header>
+            <div class="lightbox-stage">
+              <Transition name="gallery" mode="out-in">
+                <img
+                  v-if="currentSlide"
+                  :key="currentSlide.url"
+                  :src="currentSlide.url"
+                  alt="Скриншот Minecraft"
+                />
+              </Transition>
+              <div v-if="!currentSlide" class="lightbox-empty">
+                <Icon name="gallery" :size="42" /><b>{{
+                  tr(
+                    "Пока нет снимков",
+                    "No screenshots yet",
+                    "Aún no hay capturas",
+                  )
+                }}</b
+                ><small>{{
+                  tr(
+                    "Скриншоты из папки Minecraft появятся здесь автоматически.",
+                    "Minecraft screenshots will appear here automatically.",
+                    "Las capturas de Minecraft aparecerán aquí automáticamente.",
+                  )
+                }}</small>
+              </div>
+              <template v-else>
+                <button class="lightbox-prev" @click="moveSlide(-1)">
+                  <Icon name="back" :size="22" />
+                </button>
+                <button class="lightbox-next" @click="moveSlide(1)">
+                  <Icon name="chevron" :size="22" />
+                </button>
+              </template>
+            </div>
+          </section>
+        </div>
+      </Transition>
+    </Teleport>
 
     <footer class="home-foot">
       <div class="quick-links">
@@ -373,70 +618,70 @@ onBeforeUnmount(() => {
           ><Icon name="settings" :size="17" /><span>{{
             tr("Настройки", "Settings", "Ajustes")
           }}</span></RouterLink
-        ><span class="build-state" :class="{ ok: launcher.isInstalled }"
-          ><i />{{
-            launcher.statusText ||
-            (launcher.updateInfo?.available
-              ? tr(
-                  "Доступно обновление Royale Master",
-                  "Royale Master update available",
-                  "Actualización de Royale Master disponible",
-                )
-              : launcher.isInstalled
-                ? `Royale ${GAME.clientVersion} готов`
-                : tr(
-                    "Требуется установка",
-                    "Installation required",
-                    "Instalación necesaria",
-                  ))
-          }}</span
         >
-        <span
-          v-if="launcher.installProgress?.bytesPerSecond"
-          class="download-metrics"
-        >
-          {{ formatBytes(launcher.installProgress.downloadedBytes)
-          }}<template v-if="launcher.installProgress.totalBytes">
-            / {{ formatBytes(launcher.installProgress.totalBytes) }}</template
-          >
-          · {{ formatBytes(launcher.installProgress.bytesPerSecond) }}/с
-        </span>
       </div>
-      <button
-        class="launch-pill"
-        :class="{
-          busy,
-          installing: ['downloading', 'paused'].includes(launcher.state),
-        }"
-        :disabled="busy"
-        @click="launch"
-      >
-        <span
-          v-if="launcher.state === 'downloading' || launcher.state === 'paused'"
-          class="progress"
-          :style="{ width: `${launcher.progress}%` }"
-        /><span class="play-orb"
-          ><Icon
-            :name="actionIcon"
-            :size="21"
-            :class="{ spin: account.refreshing }" /></span
-        ><b>{{ actionLabel }}</b
-        ><span
-          class="launch-settings"
-          @click.stop="
-            ['downloading', 'paused'].includes(launcher.state)
-              ? launcher.cancel()
-              : router.push('/settings')
-          "
-          ><Icon
-            :name="
-              ['downloading', 'paused'].includes(launcher.state)
-                ? 'close'
-                : 'settings'
+      <div class="launch-zone">
+        <div
+          class="launch-pill"
+          :class="{
+            busy,
+            installing: ['downloading', 'paused'].includes(launcher.state),
+            paused: launcher.state === 'paused',
+            transporting: launcher.transportBusy,
+          }"
+        >
+          <span
+            v-if="
+              launcher.state === 'downloading' || launcher.state === 'paused'
             "
-            :size="19"
-        /></span>
-      </button>
+            class="progress"
+            :style="{ width: `${launcher.progress}%` }"
+          />
+          <button
+            class="launch-main-action"
+            :disabled="busy || launcher.transportBusy"
+            @click="launch"
+          >
+            <span class="play-orb"
+              ><Icon
+                :name="actionIcon"
+                :size="21"
+                :class="{
+                  spin:
+                    account.refreshing ||
+                    (launcher.state === 'downloading' &&
+                      launcher.installProgress?.canPause === false),
+                }" /></span
+            ><span class="launch-action-copy"
+              ><b>{{ actionLabel }}</b
+              ><small v-if="actionSecondary">{{ actionSecondary }}</small></span
+            >
+          </button>
+          <button
+            class="launch-settings"
+            :disabled="launcher.transportBusy"
+            :title="
+              ['downloading', 'paused'].includes(launcher.state)
+                ? 'Остановить установку'
+                : 'Открыть настройки'
+            "
+            @click.stop="
+              ['downloading', 'paused'].includes(launcher.state)
+                ? launcher.cancel()
+                : router.push('/settings')
+            "
+          >
+            <Icon
+              :name="
+                ['downloading', 'paused'].includes(launcher.state)
+                  ? 'close'
+                  : 'settings'
+              "
+              :size="19"
+            />
+          </button>
+        </div>
+      </div>
     </footer>
 
     <Transition name="fade"
@@ -532,7 +777,7 @@ onBeforeUnmount(() => {
   font-size: 10.5px;
 }
 .instance {
-  margin-top: clamp(34px, 7vh, 74px);
+  margin-top: clamp(6px, 1.8vh, 18px);
   max-width: 760px;
 }
 .instance h1 {
@@ -683,9 +928,9 @@ onBeforeUnmount(() => {
 }
 .default-visual {
   position: absolute;
-  right: clamp(72px, 10vw, 150px);
-  top: 50%;
-  width: clamp(270px, 31vw, 410px);
+  right: clamp(32px, 5vw, 70px);
+  top: 49%;
+  width: clamp(230px, 25vw, 300px);
   aspect-ratio: 1;
   transform: translateY(-53%);
   display: grid;
@@ -924,6 +1169,13 @@ onBeforeUnmount(() => {
   position: relative;
   z-index: 2;
 }
+.launch-zone {
+  width: 286px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0;
+}
 .quick-links {
   display: flex;
   align-items: center;
@@ -965,17 +1217,13 @@ onBeforeUnmount(() => {
   background: var(--green);
   box-shadow: 0 0 8px rgba(83, 195, 106, 0.6);
 }
-.download-metrics {
-  color: var(--text-3);
-  font: 9px var(--font-num);
-}
 .launch-pill {
   position: relative;
-  width: 286px;
+  width: 100%;
   height: 66px;
   padding: 0 8px;
   display: grid;
-  grid-template-columns: 48px 1fr 42px;
+  grid-template-columns: minmax(0, 1fr) 42px;
   align-items: center;
   gap: 8px;
   overflow: hidden;
@@ -990,9 +1238,30 @@ onBeforeUnmount(() => {
     filter 0.3s;
 }
 .launch-pill.installing {
-  width: 232px;
-  grid-template-columns: 42px 1fr 38px;
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr) 38px;
   gap: 4px;
+}
+.launch-main-action {
+  position: relative;
+  z-index: 2;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+}
+.launch-pill.installing .launch-main-action {
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 4px;
+}
+.launch-main-action:disabled {
+  cursor: default;
 }
 .launch-pill.installing .play-orb {
   width: 40px;
@@ -1002,7 +1271,7 @@ onBeforeUnmount(() => {
   width: 38px;
   height: 38px;
 }
-.launch-pill:hover:not(:disabled) {
+.launch-pill:has(.launch-main-action:hover:not(:disabled)) {
   transform: translateY(-4px) scale(1.012);
   box-shadow: 0 24px 58px rgba(35, 142, 59, 0.44);
   filter: brightness(1.06);
@@ -1021,21 +1290,66 @@ onBeforeUnmount(() => {
   place-items: center;
   border-radius: 50%;
   background: #ffffff2b;
+  transition:
+    transform 0.18s var(--ease),
+    background 0.18s ease,
+    box-shadow 0.18s ease;
+}
+.play-orb :deep(svg) {
+  transition:
+    transform 0.18s var(--ease),
+    opacity 0.18s ease;
+}
+.launch-main-action:hover:not(:disabled) .play-orb {
+  transform: scale(1.08);
+  background: #ffffff42;
+  box-shadow: 0 0 0 5px #ffffff12;
+}
+.launch-main-action:hover:not(:disabled) .play-orb :deep(svg) {
+  animation: action-icon-hover 0.42s var(--ease) both;
+}
+.launch-pill.paused .play-orb {
+  animation: resume-pulse 1.35s ease-in-out infinite;
+}
+.launch-pill.transporting .play-orb :deep(svg) {
+  animation: control-pop 0.42s var(--ease) infinite alternate;
 }
 .launch-settings {
   width: 42px;
   height: 42px;
   cursor: pointer;
 }
+.launch-settings:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
 .launch-settings :deep(svg) {
   transition: transform 0.24s var(--ease);
 }
-.launch-settings:hover :deep(svg) {
+.launch-settings:hover:not(:disabled) :deep(svg) {
   transform: rotate(140deg) scale(1.08);
 }
-.launch-pill > b {
-  position: relative;
-  z-index: 2;
+.launch-main-action > b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.launch-action-copy {
+  min-width: 0;
+  text-align: center;
+}
+.launch-action-copy b,
+.launch-action-copy small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.launch-action-copy small {
+  margin-top: 2px;
+  font: 8px var(--font-num);
+  opacity: 0.64;
 }
 .progress {
   position: absolute;
@@ -1047,7 +1361,8 @@ onBeforeUnmount(() => {
   position: absolute;
   left: 38px;
   bottom: 88px;
-  max-width: 540px;
+  width: min(360px, calc(100% - 76px));
+  max-height: 78px;
   display: flex;
   gap: 8px;
   padding: 10px 12px;
@@ -1055,7 +1370,375 @@ onBeforeUnmount(() => {
   color: var(--danger);
   background: rgba(36, 17, 20, 0.92);
   border: 1px solid rgba(255, 93, 108, 0.25);
-  font-size: 12px;
+  overflow: auto;
+  font-size: 10px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.content-dashboard {
+  position: relative;
+  z-index: 3;
+  width: min(650px, calc(100vw - 420px));
+  height: 222px;
+  margin-top: clamp(38px, 6.2vh, 66px);
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  transition: width 0.18s var(--ease);
+}
+.dashboard-card {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: rgba(18, 22, 20, 0.86);
+  box-shadow: 0 10px 28px #0003;
+  backdrop-filter: blur(14px);
+  transition:
+    transform 0.16s var(--ease),
+    border-color 0.16s ease,
+    background 0.16s ease;
+}
+.dashboard-card:hover {
+  border-color: var(--hairline-strong);
+  background: rgba(24, 29, 27, 0.94);
+  transform: translateY(-2px);
+}
+.dashboard-card > header {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.dashboard-card > header > span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-0);
+  font-size: 11px;
+  font-weight: 650;
+}
+.dashboard-card > header svg {
+  color: var(--green);
+}
+.dashboard-card > header button {
+  width: 27px;
+  height: 27px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--text-2);
+  background: rgba(255, 255, 255, 0.05);
+}
+.dashboard-card > header button:hover {
+  color: var(--text-0);
+  background: rgba(255, 255, 255, 0.1);
+}
+.mods-card {
+  grid-column: 1;
+  grid-row: 1 / 3;
+}
+.worlds-card {
+  grid-column: 2;
+  grid-row: 1;
+}
+.shaders-card {
+  grid-column: 3;
+  grid-row: 1;
+}
+.resources-card {
+  grid-column: 4;
+  grid-row: 1 / 3;
+}
+.screenshots-card {
+  grid-column: 2 / 4;
+  grid-row: 2;
+  padding: 0;
+  background: rgba(14, 17, 16, 0.9);
+}
+.card-count {
+  margin-top: 11px;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.card-count b {
+  color: var(--text-0);
+  font: 600 24px/1 var(--font-num);
+}
+.card-count span,
+.dashboard-card > p {
+  color: var(--text-3);
+  font-size: 9px;
+}
+.dashboard-card > p {
+  margin-top: 8px;
+  line-height: 1.4;
+}
+.content-icons {
+  width: 103px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  align-content: start;
+  margin-top: 11px;
+  min-height: 27px;
+  max-height: 108px;
+}
+.content-icons > span,
+.content-icons > b {
+  width: 27px;
+  height: 27px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  overflow: hidden;
+  border: 2px solid rgba(18, 22, 20, 0.98);
+  border-radius: 50%;
+  color: var(--green);
+  background: var(--surface-3);
+  box-shadow: 0 5px 12px #0005;
+}
+.content-icons > :not(:nth-child(5n + 1)) {
+  margin-left: -8px;
+}
+.content-icons > :nth-child(5n + 1) {
+  z-index: 5;
+}
+.content-icons > :nth-child(5n + 2) {
+  z-index: 4;
+}
+.content-icons > :nth-child(5n + 3) {
+  z-index: 3;
+}
+.content-icons > :nth-child(5n + 4) {
+  z-index: 2;
+}
+.content-icons > :nth-child(5n + 5) {
+  z-index: 1;
+}
+.content-icons img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.content-icons > b {
+  min-width: 27px;
+  padding: 0 3px;
+  color: var(--text-1);
+  font: 700 8px var(--font-num);
+}
+.content-icons.compact {
+  width: 62px;
+  gap: 0;
+  margin-top: 7px;
+  max-height: 40px;
+}
+.content-icons.compact > span,
+.content-icons.compact > b {
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  border-width: 1px;
+  font-size: 7px;
+}
+.content-icons.compact > :not(:nth-child(4n + 1)) {
+  margin-left: -6px;
+}
+.screenshots-card > img,
+.screenshot-shade {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.screenshots-card > img {
+  object-fit: cover;
+}
+.screenshot-shade {
+  z-index: 1;
+  background: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0.64),
+    transparent 52%,
+    rgba(0, 0, 0, 0.58)
+  );
+  pointer-events: none;
+}
+.screenshots-card > header {
+  padding: 9px 10px;
+}
+.screenshots-card > header > div {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.screenshots-card > header small {
+  color: #fff9;
+  font: 9px var(--font-num);
+}
+.empty-gallery {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 7px;
+  color: var(--text-3);
+}
+.empty-gallery b {
+  font-size: 10px;
+  font-weight: 550;
+}
+.screenshots-card .gallery-actions {
+  z-index: 2;
+  opacity: 0;
+}
+.screenshots-card:hover .gallery-actions {
+  opacity: 1;
+  transform: scale(1);
+}
+.screenshots-card nav {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  bottom: 9px;
+  display: flex;
+  gap: 5px;
+  transform: translateX(-50%);
+}
+.screenshots-card nav button {
+  width: 6px;
+  height: 6px;
+  border-radius: 6px;
+  background: #fff6;
+}
+.screenshots-card nav button.active {
+  width: 18px;
+  background: var(--green);
+}
+.gallery-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: grid;
+  place-items: center;
+  padding: 34px;
+  background: rgba(3, 7, 5, 0.82);
+  backdrop-filter: blur(18px);
+}
+.gallery-lightbox > section {
+  width: min(1040px, 92vw);
+  height: min(720px, 84vh);
+  display: grid;
+  grid-template-rows: 58px minmax(0, 1fr);
+  overflow: hidden;
+  border-radius: 18px;
+  background: #0d120f;
+  border: 1px solid var(--hairline-strong);
+  box-shadow: 0 34px 110px #000d;
+}
+.gallery-lightbox header {
+  padding: 0 16px 0 19px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--hairline);
+}
+.gallery-lightbox header > div,
+.gallery-lightbox header span {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.gallery-lightbox header svg {
+  color: var(--green);
+}
+.gallery-lightbox header b {
+  font-size: 13px;
+}
+.gallery-lightbox header small {
+  color: var(--text-3);
+  font: 10px var(--font-num);
+}
+.gallery-lightbox header button {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: var(--text-2);
+  background: var(--surface-3);
+}
+.lightbox-stage {
+  position: relative;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+.lightbox-stage > img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.lightbox-prev,
+.lightbox-next {
+  position: absolute;
+  top: 50%;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  color: #fff;
+  background: #070a08b8;
+  border: 1px solid #ffffff24;
+  transform: translateY(-50%);
+}
+.lightbox-prev {
+  left: 16px;
+}
+.lightbox-next {
+  right: 16px;
+}
+.lightbox-empty {
+  display: grid;
+  justify-items: center;
+  gap: 9px;
+  color: var(--text-3);
+  text-align: center;
+}
+.lightbox-empty b {
+  color: var(--text-1);
+}
+.lightbox-empty small {
+  max-width: 360px;
+}
+.gallery-modal-enter-active,
+.gallery-modal-leave-active {
+  transition: opacity 0.18s ease;
+}
+.gallery-modal-enter-active > section,
+.gallery-modal-leave-active > section {
+  transition:
+    transform 0.2s var(--ease),
+    opacity 0.18s;
+}
+.gallery-modal-enter-from,
+.gallery-modal-leave-to {
+  opacity: 0;
+}
+.gallery-modal-enter-from > section,
+.gallery-modal-leave-to > section {
+  opacity: 0;
+  transform: scale(0.975) translateY(8px);
 }
 .spin {
   animation: spin 0.8s linear infinite;
@@ -1065,10 +1748,40 @@ onBeforeUnmount(() => {
     transform: rotate(360deg);
   }
 }
+@keyframes resume-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 #ffffff24;
+  }
+  50% {
+    box-shadow: 0 0 0 7px #ffffff00;
+  }
+}
+@keyframes control-pop {
+  from {
+    transform: scale(0.78);
+    opacity: 0.65;
+  }
+  to {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+}
+@keyframes action-icon-hover {
+  0% {
+    transform: scale(1);
+  }
+  48% {
+    transform: scale(0.82);
+  }
+  100% {
+    transform: scale(1.16);
+  }
+}
 @media (max-width: 920px) {
   .default-visual {
-    right: -80px;
-    opacity: 0.28;
+    right: -40px;
+    opacity: 0.2;
   }
   .instance {
     position: relative;
@@ -1105,12 +1818,31 @@ onBeforeUnmount(() => {
     width: 100%;
     max-width: 520px;
   }
+  .content-dashboard {
+    width: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .content-dashboard .mods-card {
+    grid-column: 1;
+  }
+  .content-dashboard .resources-card {
+    grid-column: 2;
+  }
+  .content-dashboard .worlds-card,
+  .content-dashboard .shaders-card,
+  .content-dashboard .screenshots-card {
+    display: none;
+  }
   .content-list {
     grid-template-columns: 1fr 1fr;
   }
   .home-foot {
     align-items: stretch;
     flex-direction: column;
+  }
+  .launch-zone {
+    width: 100%;
+    align-items: stretch;
   }
   .launch-pill {
     align-self: flex-end;

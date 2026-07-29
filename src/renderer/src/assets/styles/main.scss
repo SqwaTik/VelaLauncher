@@ -1,3 +1,32 @@
+@font-face {
+  font-family: "Roboto";
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url("../fonts/roboto-light.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Roboto";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../fonts/roboto-regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Roboto";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("../fonts/roboto-medium.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Roboto";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("../fonts/roboto-bold.woff2") format("woff2");
+}
+
 /* ============================================================
    Royale Launcher — "Clean Material" design system
    XMCL-inspired: opaque engineered surfaces, one strong green
@@ -7,32 +36,32 @@
 
 :root {
   /* --- surfaces: opaque, layered by elevation --- */
-  --surface-0: #090d0b; /* app backdrop */
-  --surface-1: #111614; /* base panels */
-  --surface-2: #181e1b; /* cards */
-  --surface-3: #222a25; /* raised cards / inputs */
-  --surface-4: #2d3731; /* hover / active */
+  --surface-0: #0b0e0d; /* app backdrop */
+  --surface-1: #121513; /* base panels */
+  --surface-2: #191d1b; /* cards */
+  --surface-3: #222724; /* raised cards / inputs */
+  --surface-4: #2c322f; /* hover / active */
   --hairline: rgba(255, 255, 255, 0.08);
   --hairline-strong: rgba(255, 255, 255, 0.15);
 
   /* --- text --- */
-  --text-0: #f2f6f3;
-  --text-1: #c2cbc5;
-  --text-2: #89958d;
-  --text-3: #626d65;
+  --text-0: #f2f3f2;
+  --text-1: #c3c7c4;
+  --text-2: #919791;
+  --text-3: #687069;
 
   /* --- primary accent: Minecraft grass green (the action colour) --- */
-  --green: #59d477;
-  --green-bright: #7ce193;
-  --green-deep: #35a953;
-  --green-soft: rgba(89, 212, 119, 0.13);
-  --green-line: rgba(89, 212, 119, 0.42);
-  --green-grad: linear-gradient(135deg, #42b75f 0%, #5bd478 55%, #7ee194 100%);
+  --green: #4fbd67;
+  --green-bright: #66c879;
+  --green-deep: #358f4a;
+  --green-soft: rgba(79, 189, 103, 0.13);
+  --green-line: rgba(79, 189, 103, 0.4);
+  --green-grad: linear-gradient(135deg, #46aa5b 0%, #57bb6b 56%, #69c97a 100%);
 
   /* --- secondary accent: amethyst (mods / links) --- */
-  --amethyst: #9a7cff;
-  --amethyst-soft: rgba(154, 124, 255, 0.13);
-  --amethyst-line: rgba(154, 124, 255, 0.42);
+  --amethyst: #83a6bb;
+  --amethyst-soft: rgba(131, 166, 187, 0.13);
+  --amethyst-line: rgba(131, 166, 187, 0.38);
 
   /* --- status --- */
   --ok: #56c568;
@@ -59,10 +88,9 @@
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
 
   /* type roles */
-  --font-display:
-    "Bahnschrift", "DIN Next", "Oswald", "Segoe UI Semibold", sans-serif;
-  --font-body: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
-  --font-num: "Bahnschrift", "Segoe UI", ui-monospace, monospace;
+  --font-display: "Roboto", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Roboto", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-num: "Roboto", "Segoe UI", ui-monospace, monospace;
 
   /* ------------------------------------------------------------
      Legacy aliases — keep older view code compiling while it is
@@ -129,7 +157,7 @@ body {
   color: var(--text-1);
   background: var(--surface-0);
   -webkit-font-smoothing: antialiased;
-  text-rendering: geometricPrecision;
+  text-rendering: optimizeLegibility;
   user-select: none;
   font-size: 14px;
 }

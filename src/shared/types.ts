@@ -3,6 +3,13 @@
 export type AccountType = "microsoft" | "offline" | "ely" | "littleskin";
 export type SkinModel = "classic" | "slim";
 
+export interface CustomCape {
+  id: string;
+  name: string;
+  dataUrl: string;
+  createdAt: number;
+}
+
 export interface StoredAccount {
   id: string;
   username: string;
@@ -11,6 +18,9 @@ export interface StoredAccount {
   skinModel: SkinModel;
   /** Locally edited 64x64 PNG used by the launcher preview. */
   skinDataUrl?: string;
+  /** Local cape wardrobe used by the Royale preview/client integration. */
+  customCapes?: CustomCape[];
+  activeCustomCapeId?: string | null;
   /** MS access token, if any (never rendered). */
   accessToken?: string;
   refreshToken?: string;
@@ -25,6 +35,29 @@ export interface Friend {
   username: string;
   uuid: string;
   addedAt: number;
+}
+
+export type InstanceSource = "default" | "created" | "imported";
+
+export interface InstanceSharedFolders {
+  worlds: boolean;
+  resourcePacks: boolean;
+  shaderPacks: boolean;
+}
+
+/** A separate Minecraft workspace shown as a round item in the launcher rail. */
+export interface GameInstance {
+  id: string;
+  name: string;
+  /** Empty only for the original Royale Master workspace at storagePath root. */
+  directory: string;
+  source: InstanceSource;
+  iconDataUrl?: string | null;
+  /** Optional per-instance Java executable. Null means automatic detection. */
+  javaPath?: string | null;
+  pinned: boolean;
+  createdAt: number;
+  sharedFolders: InstanceSharedFolders;
 }
 
 /** Canonical Minecraft profile returned by Mojang's public profile API. */
@@ -121,6 +154,8 @@ export interface PersistShape {
   settings: AppSettings;
   accounts: StoredAccount[];
   activeAccountId: string | null;
+  instances: GameInstance[];
+  activeInstanceId: string;
   friends: Friend[];
   stats: LauncherStats;
 }
@@ -166,12 +201,35 @@ export interface ClientUpdateInfo {
   delivery: "release" | "source-build" | null;
 }
 
+export interface LauncherUpdateInfo {
+  currentVersion: string;
+  latestVersion: string;
+  available: boolean;
+  releaseUrl: string;
+  downloadUrl: string | null;
+  publishedAt: string | null;
+}
+
+export interface LauncherUpdateProgress {
+  phase: "downloading" | "installing" | "error";
+  progress: number;
+  downloadedBytes: number;
+  totalBytes: number;
+  message: string;
+}
+
 export interface GameContentSummary {
   mods: number;
   resourcePacks: number;
   shaderPacks: number;
   worlds: number;
   screenshots: number;
+  worldItems: GameContentItem[];
+}
+
+export interface GameContentItem {
+  name: string;
+  iconDataUrl?: string | null;
 }
 
 export interface ElyLoginInput {
@@ -238,6 +296,7 @@ export interface ModVersionFile {
   url: string;
   size: number;
   sha1: string;
+  sha512?: string;
   dependencies: ModDependency[];
 }
 
@@ -255,6 +314,9 @@ export interface InstalledMod {
   filename: string;
   size: number;
   enabled: boolean;
+  sha1?: string;
+  expectedSize?: number;
+  validatedMtimeMs?: number;
   projectId?: string;
   title?: string;
   versionNumber?: string;
@@ -268,8 +330,29 @@ export interface InstalledMod {
   latestVersionNumber?: string;
 }
 
+export interface InstalledResourcePack extends InstalledMod {}
+
+export interface InstalledShaderPack extends InstalledMod {}
+
 export interface ModInstallResult {
   root: InstalledMod;
   installed: InstalledMod[];
   dependencyTitles: string[];
+}
+
+export interface ModpackProgress {
+  phase: "reading" | "downloading" | "copying" | "packing" | "done";
+  progress: number;
+  message: string;
+  detail?: string;
+}
+
+export interface ModpackResult {
+  path: string;
+  name: string;
+  instanceId?: string;
+  mods: number;
+  resourcePacks: number;
+  shaderPacks: number;
+  files: number;
 }

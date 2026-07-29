@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { SkinViewer } from "skinview3d";
-import { MOUSE, Raycaster, Vector2 } from "three";
+import { MOUSE, Mesh, Raycaster, Vector2 } from "three";
+import type { Object3D } from "three";
 import type { SkinModel } from "@shared/types";
 
 const props = withDefaults(
   defineProps<{
     skin?: string | null;
+    cape?: string | null;
     model?: SkinModel;
     autoRotate?: boolean;
     innerLayer?: boolean;
@@ -19,6 +21,7 @@ const props = withDefaults(
   }>(),
   {
     skin: null,
+    cape: null,
     model: "classic",
     autoRotate: true,
     innerLayer: true,
@@ -31,7 +34,14 @@ const props = withDefaults(
   },
 );
 const emit = defineEmits<{
-  paint: [payload: { x: number; y: number; phase: "begin" | "move" | "end" }];
+  paint: [
+    payload: {
+      x: number;
+      y: number;
+      layer: "inner" | "outer";
+      phase: "begin" | "move" | "end";
+    },
+  ];
 }>();
 
 const host = ref<HTMLDivElement | null>(null);
@@ -40,12 +50,36 @@ const loading = ref(true);
 let viewer: SkinViewer | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let loadNonce = 0;
+let capeLoadNonce = 0;
 let disposed = false;
 let modelDrawing = false;
 const raycaster = new Raycaster();
 const pointer = new Vector2();
 
-function texturePoint(event: PointerEvent): { x: number; y: number } | null {
+function layerOf(object: Object3D): "inner" | "outer" | null {
+  let current: Object3D | null = object;
+  while (current && current !== viewer?.playerObject.skin) {
+    if (current.name === "inner" || current.name === "outer") {
+      return current.name;
+    }
+    current = current.parent;
+  }
+  return null;
+}
+
+function isVisible(object: Object3D): boolean {
+  let current: Object3D | null = object;
+  while (current) {
+    if (!current.visible) return false;
+    if (current === viewer?.playerObject.skin) break;
+    current = current.parent;
+  }
+  return true;
+}
+
+function texturePoint(
+  event: PointerEvent,
+): { x: number; y: number; layer: "inner" | "outer" } | null {
   if (!viewer || !canvas.value) return null;
   const rect = canvas.value.getBoundingClientRect();
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -53,11 +87,16 @@ function texturePoint(event: PointerEvent): { x: number; y: number } | null {
   raycaster.setFromCamera(pointer, viewer.camera);
   const hit = raycaster
     .intersectObject(viewer.playerObject.skin, true)
-    .find((entry) => entry.uv);
+    .find(
+      (entry) => entry.uv && isVisible(entry.object) && layerOf(entry.object),
+    );
   if (!hit?.uv) return null;
+  const layer = layerOf(hit.object);
+  if (!layer) return null;
   return {
     x: Math.max(0, Math.min(63, Math.floor(hit.uv.x * 64))),
     y: Math.max(0, Math.min(63, Math.floor((1 - hit.uv.y) * 64))),
+    layer,
   };
 }
 function beginPaint(event: PointerEvent): void {
@@ -82,7 +121,7 @@ function endPaint(event: PointerEvent): void {
   event.preventDefault();
   event.stopPropagation();
   modelDrawing = false;
-  const point = texturePoint(event) ?? { x: 0, y: 0 };
+  const point = texturePoint(event) ?? { x: 0, y: 0, layer: "inner" };
   emit("paint", { ...point, phase: "end" });
 }
 
@@ -105,6 +144,20 @@ function applyLayers(): void {
   skin.leftLeg.outerLayer.visible = props.outerLayer && props.legsOuter;
   skin.rightLeg.outerLayer.visible = props.outerLayer && props.legsOuter;
 }
+function enableTransparentPixels(): void {
+  if (!viewer) return;
+  viewer.playerObject.skin.traverse((object) => {
+    if (!(object instanceof Mesh)) return;
+    const materials = Array.isArray(object.material)
+      ? object.material
+      : [object.material];
+    materials.forEach((material) => {
+      material.transparent = true;
+      material.alphaTest = 0.01;
+      material.needsUpdate = true;
+    });
+  });
+}
 async function loadSkin(source: string | null | undefined): Promise<void> {
   if (!viewer) return;
   const nonce = ++loadNonce;
@@ -118,7 +171,23 @@ async function loadSkin(source: string | null | undefined): Promise<void> {
         .loadSkin("https://minotar.net/skin/Steve", { model: "default" })
         .catch(() => undefined);
   }
-  if (nonce === loadNonce) applyLayers();
+  if (nonce === loadNonce) {
+    enableTransparentPixels();
+    applyLayers();
+  }
+}
+async function loadCape(source: string | null | undefined): Promise<void> {
+  if (!viewer) return;
+  const nonce = ++capeLoadNonce;
+  if (!source) {
+    viewer.loadCape(null);
+    return;
+  }
+  try {
+    await viewer.loadCape(source);
+  } catch {
+    if (nonce === capeLoadNonce) viewer.resetCape();
+  }
 }
 
 onMounted(async () => {
@@ -142,6 +211,11 @@ onMounted(async () => {
   viewer.controls.enablePan = false;
   viewer.controls.enableRotate = true;
   viewer.controls.enableZoom = true;
+  viewer.controls.enableDamping = true;
+  viewer.controls.dampingFactor = 0.075;
+  // In the editor LMB belongs exclusively to painting. Rotation stays on
+  // RMB, so drawing cannot unexpectedly spin the model under the cursor.
+  if (props.editable) viewer.controls.mouseButtons.LEFT = MOUSE.PAN;
   viewer.controls.mouseButtons.RIGHT = MOUSE.ROTATE;
   const idle = new IdleAnimation();
   idle.speed = 0.7;
@@ -149,6 +223,7 @@ onMounted(async () => {
   resizeObserver = new ResizeObserver(resize);
   resizeObserver.observe(host.value);
   await loadSkin(props.skin);
+  await loadCape(props.cape);
   loading.value = false;
 });
 onBeforeUnmount(() => {
@@ -161,6 +236,10 @@ onBeforeUnmount(() => {
 watch(
   () => props.skin,
   (value) => void loadSkin(value),
+);
+watch(
+  () => props.cape,
+  (value) => void loadCape(value),
 );
 watch(
   () => props.model,
@@ -207,6 +286,18 @@ watch(
   width: 100%;
   height: 100%;
   overflow: hidden;
+  background-color: rgba(13, 18, 15, 0.72);
+  background-image:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.035) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255, 255, 255, 0.035) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(255, 255, 255, 0.035) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(255, 255, 255, 0.035) 75%);
+  background-size: 18px 18px;
+  background-position:
+    0 0,
+    0 9px,
+    9px -9px,
+    -9px 0;
 }
 .skin-preview-3d canvas {
   display: block;
