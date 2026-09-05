@@ -1,10 +1,10 @@
 # Vela Launcher
 
-Настольный лаунчер для Minecraft `1.21.11` и Fabric на Electron, Vue 3 и TypeScript.
+Настольный лаунчер Vela для Minecraft `1.21.11` и Fabric на Electron, Vue 3 и TypeScript.
 
 ## Возможности
 
-- установка Minecraft, Fabric Loader, Fabric API, Java 21 и сборки Royale с подробным прогрессом;
+- установка Minecraft, Fabric Loader, Fabric API, Java 21 и сборки Vela с подробным прогрессом;
 - пауза, продолжение и отмена загрузки;
 - запуск игры, автоматический выбор Java и настраиваемая память;
 - каталог Modrinth с поиском, фильтрами, изображениями, галереями и Markdown-описаниями;
@@ -17,7 +17,7 @@
 - Discord Rich Presence, стартовое обучение и диалог восстановления после сбоя;
 - интерфейс на русском, английском и испанском языках.
 
-Доступны автономные профили, Ely.by и LittleSkin.
+Вход Microsoft временно скрыт из интерфейса: для него нужен зарегистрированный OAuth-клиент. Локальные профили, Ely.by и LittleSkin работают без Microsoft Application ID.
 
 ## Разработка
 

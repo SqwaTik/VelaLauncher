@@ -6,12 +6,14 @@ import type {
   SkinModel,
   Friend,
   MinecraftAppearance,
+  CustomCape,
   ElyLoginInput,
   LittleSkinLoginInput,
 } from "@shared/types";
 
 export type { AccountType, SkinModel };
 export type Account = StoredAccount;
+export const MAX_ACCOUNTS = 6;
 
 /** Offline UUID: FNV-hash-based, stable per-name (vanilla-style offline identity). */
 function offlineUuid(name: string): string {
@@ -53,6 +55,7 @@ export const useAccountStore = defineStore("account", () => {
   const accounts = ref<StoredAccount[]>([]);
   const activeId = ref<string | null>(null);
   const friends = ref<Friend[]>([]);
+  const accountLimitError = ref("");
 
   const elyBusy = ref(false);
   const elyError = ref("");
@@ -62,6 +65,18 @@ export const useAccountStore = defineStore("account", () => {
   const active = computed(
     () => accounts.value.find((a) => a.id === activeId.value) ?? null,
   );
+  const canAddAccount = computed(() => accounts.value.length < MAX_ACCOUNTS);
+
+  function requireAccountSlot(existingId?: string): void {
+    accountLimitError.value = "";
+    if (
+      !existingId &&
+      accounts.value.length >= MAX_ACCOUNTS
+    ) {
+      accountLimitError.value = "Можно добавить не больше 6 аккаунтов.";
+      throw new Error(accountLimitError.value);
+    }
+  }
   const avatar = computed(() => (active.value ? avatarFor(active.value) : ""));
   const skinSource = computed(() => {
     if (!active.value) return null;
@@ -75,6 +90,19 @@ export const useAccountStore = defineStore("account", () => {
   const appearanceLoading = ref(false);
   const appearanceError = ref("");
   const appearanceNonce = ref(Date.now());
+  const customCapes = computed(() => active.value?.customCapes ?? []);
+  const activeCustomCape = computed(
+    () =>
+      customCapes.value.find(
+        (cape) => cape.id === active.value?.activeCustomCapeId,
+      ) ?? null,
+  );
+  const capeSource = computed(
+    () =>
+      activeCustomCape.value?.dataUrl ||
+      appearance.value?.capes.find((cape) => cape.state === "ACTIVE")?.url ||
+      null,
+  );
 
   function avatarOf(
     a: Pick<StoredAccount, "username" | "uuid" | "type">,
@@ -127,6 +155,11 @@ export const useAccountStore = defineStore("account", () => {
   function addOffline(username: string): void {
     const name = username.trim();
     if (!name) return;
+    try {
+      requireAccountSlot();
+    } catch {
+      return;
+    }
     const id = `offline-${Date.now()}`;
     accounts.value.push({
       id,
@@ -145,6 +178,7 @@ export const useAccountStore = defineStore("account", () => {
     try {
       const result = await window.royale.auth.elyLogin(input);
       const index = accounts.value.findIndex((item) => item.id === result.id);
+      requireAccountSlot(index >= 0 ? result.id : undefined);
       if (index >= 0) accounts.value[index] = result;
       else accounts.value.push(result);
       activeId.value = result.id;
@@ -164,6 +198,7 @@ export const useAccountStore = defineStore("account", () => {
     try {
       const result = await window.royale.auth.littleSkinLogin(input);
       const index = accounts.value.findIndex((item) => item.id === result.id);
+      requireAccountSlot(index >= 0 ? result.id : undefined);
       if (index >= 0) accounts.value[index] = result;
       else accounts.value.push(result);
       activeId.value = result.id;
@@ -184,9 +219,6 @@ export const useAccountStore = defineStore("account", () => {
     if (!active.value) return;
     active.value.skinModel = model;
     await persist();
-    if (active.value.type === "microsoft" && appearance.value?.skinDataUrl) {
-      await uploadSkin(appearance.value.skinDataUrl, model);
-    }
   }
 
   async function saveLocalSkin(
@@ -290,9 +322,86 @@ export const useAccountStore = defineStore("account", () => {
         : await window.royale.appearance.hideCape(
             JSON.parse(JSON.stringify(current)),
           );
+      current.activeCustomCapeId = null;
+      await persist();
     } finally {
       appearanceLoading.value = false;
     }
+  }
+
+  async function addCustomCape(): Promise<void> {
+    const current = active.value;
+    if (!current) {
+      appearanceError.value = "Сначала выберите профиль.";
+      return;
+    }
+    const capes = current.customCapes ?? [];
+    if (capes.length >= 5) {
+      appearanceError.value = "В гардеробе может быть не больше 5 плащей.";
+      return;
+    }
+    appearanceError.value = "";
+    try {
+      const dataUrl = await window.royale.appearance.pickCape();
+      if (!dataUrl) return;
+      const cape: CustomCape = {
+        id: `cape-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        name: `Плащ ${capes.length + 1}`,
+        dataUrl,
+        createdAt: Date.now(),
+      };
+      current.customCapes = [...capes, cape];
+      current.activeCustomCapeId = cape.id;
+      await persist();
+    } catch (cause) {
+      appearanceError.value = userFacingError(
+        cause,
+        "Не удалось добавить плащ.",
+      );
+    }
+  }
+
+  async function editCustomCape(capeId: string): Promise<void> {
+    const current = active.value;
+    const capes = current?.customCapes ?? [];
+    const index = capes.findIndex((cape) => cape.id === capeId);
+    if (!current || index < 0) return;
+    current.activeCustomCapeId = capeId;
+    appearanceError.value = "";
+    try {
+      const dataUrl = await window.royale.appearance.pickCape();
+      if (dataUrl) {
+        const next = [...capes];
+        next[index] = { ...next[index], dataUrl, createdAt: Date.now() };
+        current.customCapes = next;
+      }
+      await persist();
+    } catch (cause) {
+      appearanceError.value = userFacingError(
+        cause,
+        "Не удалось заменить плащ.",
+      );
+    }
+  }
+
+  async function clearCustomCape(): Promise<void> {
+    if (!active.value) return;
+    active.value.activeCustomCapeId = null;
+    await persist();
+  }
+
+  async function disableCape(): Promise<void> {
+    await clearCustomCape();
+  }
+
+  async function removeCustomCape(capeId: string): Promise<void> {
+    if (!active.value) return;
+    active.value.customCapes = (active.value.customCapes ?? []).filter(
+      (cape) => cape.id !== capeId,
+    );
+    if (active.value.activeCustomCapeId === capeId)
+      active.value.activeCustomCapeId = null;
+    await persist();
   }
 
   function remove(id: string): void {
@@ -381,10 +490,15 @@ export const useAccountStore = defineStore("account", () => {
 
   return {
     accounts,
+    canAddAccount,
+    accountLimitError,
     activeId,
     active,
     avatar,
     skinSource,
+    capeSource,
+    customCapes,
+    activeCustomCape,
     avatarOf,
     bodyOf,
     friends,
@@ -410,6 +524,11 @@ export const useAccountStore = defineStore("account", () => {
     uploadSkin,
     resetSkin,
     selectCape,
+    addCustomCape,
+    editCustomCape,
+    clearCustomCape,
+    disableCape,
+    removeCustomCape,
     remove,
     ensureActiveSession,
     addFriend,

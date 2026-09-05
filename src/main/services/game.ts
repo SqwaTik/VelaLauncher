@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { promises as fs, existsSync } from "fs";
+import { createWriteStream, promises as fs, existsSync } from "fs";
 import { dirname, join } from "path";
 import { totalmem } from "os";
 import { exec, spawn, type ChildProcess } from "child_process";
@@ -12,11 +12,16 @@ import {
   launch,
   createMinecraftProcessWatcher,
   LaunchPrecheck,
+  type ResolvedLibrary,
   type ResolvedVersion,
 } from "@xmcl/core";
 import {
   DownloadTask,
   installTask,
+  installVersionTask,
+  installResolvedLibrariesTask,
+  installResolvedAssetsTask,
+  installAssetsTask,
   getVersionList,
   getFabricLoaderArtifact,
   installFabricByLoaderArtifact,
@@ -32,15 +37,26 @@ import type {
 import { IPC, GAME, BRAND } from "../../shared/constants";
 import { gameDir, loadState, updateStats } from "./store";
 import { detectJava, installJava21 } from "./java";
-import { installProject } from "./modrinth";
+import {
+  installProject,
+  isJarStructurallyValid,
+  repairInstalledMods,
+} from "./modrinth";
 import { setDiscordActivity } from "./discord";
 
 const execAsync = promisify(exec);
 const USER_AGENT = "SqwaTik/RoyaleLauncher";
-const FABRIC_API_PROJECT = "P7dR8mSHy";
+const FABRIC_API_PROJECT = "P7dR8mSH";
+const pendingGameLogs = new WeakMap<
+  BrowserWindow,
+  Array<{ text: string; kind: string }>
+>();
 
 let currentTask: Task<unknown> | null = null;
 let buildProcess: ChildProcess | null = null;
+let activeMinecraftProcess: ChildProcess | null = null;
+let launchInProgress = false;
+let launchGeneration = 0;
 let cancelRequested = false;
 let lastProgress: InstallProgress = { phase: "idle", progress: 0, message: "" };
 
@@ -55,6 +71,66 @@ function emitLaunch(status: LaunchStatus): void {
     window.webContents.send(IPC.gameLaunchStatus, status);
 }
 
+function createGameLogWindow(): BrowserWindow {
+  const window = new BrowserWindow({
+    width: 900,
+    height: 540,
+    minWidth: 640,
+    minHeight: 360,
+    show: false,
+    autoHideMenuBar: true,
+    backgroundColor: "#08110b",
+    title: "Vela Launcher — журнал Minecraft",
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  const html = `<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>Журнал Minecraft</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;height:100%;background:#08110b;color:#d7e0d9;font:13px/1.55 "Cascadia Mono",Consolas,monospace}
+header{position:sticky;top:0;display:flex;align-items:center;gap:10px;height:48px;padding:0 18px;background:#0d1710eF;border-bottom:1px solid #263329;backdrop-filter:blur(14px)}
+header i{width:8px;height:8px;border-radius:50%;background:#7668ff;box-shadow:0 0 14px #7668ff}header b{font:600 13px/1 system-ui;color:#f4f3ff}
+pre{min-height:calc(100% - 48px);margin:0;padding:16px 18px 28px;white-space:pre-wrap;overflow-wrap:anywhere}
+.stderr{color:#ff9b9b}.system{color:#43c7f4}
+</style></head><body><header><i></i><b>Vela · журнал запуска</b></header><pre id="log"><span class="system">Подготовка процесса Minecraft…</span>\n</pre>
+<script>
+window.appendRoyaleLog=(text,kind)=>{const log=document.getElementById("log");const line=document.createElement("span");line.className=kind||"";line.textContent=text;log.appendChild(line);window.scrollTo({top:document.body.scrollHeight,behavior:"instant"})}
+</script></body></html>`;
+  pendingGameLogs.set(window, []);
+  void window.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(html)}`,
+  );
+  window.webContents.once("did-finish-load", () => {
+    const pending = pendingGameLogs.get(window) ?? [];
+    pendingGameLogs.delete(window);
+    for (const entry of pending) appendGameLog(window, entry.text, entry.kind);
+  });
+  window.once("ready-to-show", () => window.show());
+  return window;
+}
+
+function appendGameLog(
+  window: BrowserWindow | null,
+  text: string,
+  kind = "",
+): void {
+  if (!window || window.isDestroyed()) return;
+  const pending = pendingGameLogs.get(window);
+  if (pending) {
+    pending.push({ text, kind });
+    return;
+  }
+  void window.webContents
+    .executeJavaScript(
+      `window.appendRoyaleLog?.(${JSON.stringify(text)},${JSON.stringify(kind)})`,
+      true,
+    )
+    .catch(() => undefined);
+}
+
 function report(
   phase: InstallPhase,
   progress: number,
@@ -62,6 +138,7 @@ function report(
   detail?: string,
   extra?: Partial<InstallProgress>,
 ): void {
+  if (cancelRequested && phase !== "idle" && phase !== "error") return;
   const normalized = Math.min(1, Math.max(0, progress));
   const monotonic =
     phase === "idle" || phase === "done" || phase === "error"
@@ -136,26 +213,40 @@ async function remoteClientInfo(): Promise<RemoteClientInfo> {
       releaseSha = release.target_commitish;
     }
   }
-  const jar =
-    releaseSha === commit.sha
-      ? release?.assets?.find((asset) =>
-          asset.name.toLowerCase().endsWith(".jar"),
-        )
-      : undefined;
-  const state = await loadState();
-  const installedSha = state.stats.installedCommitSha ?? null;
+  const jar = release?.assets?.find((asset) =>
+    asset.name.toLowerCase().endsWith(".jar"),
+  );
+  // Launches only consume published, ready-to-run artifacts. A newer source
+  // commit must never turn the user's Play click into a local Gradle build.
+  const distributableSha = jar && releaseSha ? releaseSha : commit.sha;
+  const distributableVersion = jar
+    ? release?.tag_name ?? GAME.clientVersion
+    : GAME.clientVersion;
+  const activeRoot = await gameDir();
+  let installedSha: string | null = null;
+  try {
+    installedSha =
+      (
+        JSON.parse(
+          await fs.readFile(join(activeRoot, ".royale-client.json"), "utf8"),
+        ) as { commitSha?: string }
+      ).commitSha ?? null;
+  } catch {
+    installedSha = null;
+  }
+  const installed = await isInstalled();
   const checkedAt = Date.now();
   await updateStats({ lastUpdateCheck: checkedAt });
   return {
     update: {
       checkedAt,
       available: installedSha
-        ? installedSha !== commit.sha
-        : state.stats.installed,
+        ? installedSha !== distributableSha
+        : installed,
       installed: Boolean(installedSha),
       localCommitSha: installedSha,
-      remoteCommitSha: commit.sha,
-      remoteVersion: release?.tag_name ?? GAME.clientVersion,
+      remoteCommitSha: distributableSha,
+      remoteVersion: distributableVersion,
       commitMessage: commit.commit.message.split("\n")[0] || null,
       commitDate: commit.commit.committer?.date ?? null,
       delivery: jar ? "release" : "source-build",
@@ -168,57 +259,37 @@ export async function checkClientUpdate(): Promise<ClientUpdateInfo> {
   return (await remoteClientInfo()).update;
 }
 
-function taskPhase(task: Task<unknown>): {
-  phase: InstallPhase;
-  start: number;
-  span: number;
-  label: string;
-} {
-  const text =
-    `${task.name} ${task.path} ${task.from ?? ""} ${task.to ?? ""}`.toLowerCase();
-  if (text.includes("asset") || text.includes("objects"))
-    return {
-      phase: "assets",
-      start: 0.42,
-      span: 0.28,
-      label: "Загрузка ассетов",
-    };
-  if (text.includes("librar"))
-    return {
-      phase: "libraries",
-      start: 0.24,
-      span: 0.18,
-      label: "Загрузка библиотек",
-    };
-  return {
-    phase: "client",
-    start: 0.08,
-    span: 0.16,
-    label: `Загрузка Minecraft ${GAME.minecraftVersion}`,
-  };
-}
-
-function minecraftTaskContext(): TaskContext {
+function minecraftTaskContext(
+  rootTask: Task<unknown>,
+  onActivity?: () => void,
+): TaskContext {
   let lastBytes = 0;
   let lastAt = Date.now();
   let speed = 0;
+  let detail = "Файлы игры";
+  let detailChangedAt = 0;
   return {
     onUpdate(task) {
-      const mapped = taskPhase(task);
-      const total = Math.max(0, task.total);
-      const written = Math.max(0, task.progress);
+      if (cancelRequested) return;
+      onActivity?.();
       const now = Date.now();
+      const total = Math.max(0, rootTask.total);
+      const written = Math.max(0, rootTask.progress);
       if (now - lastAt > 300) {
         speed = Math.max(0, (written - lastBytes) / ((now - lastAt) / 1000));
         lastBytes = written;
         lastAt = now;
       }
+      if (task.to && now - detailChangedAt > 450) {
+        detail = task.to;
+        detailChangedAt = now;
+      }
       const fraction = total > 0 ? Math.min(1, written / total) : 0.1;
       report(
-        mapped.phase,
-        mapped.start + mapped.span * fraction,
-        mapped.label,
-        task.to ?? task.name,
+        "client",
+        0.08 + 0.62 * fraction,
+        `Загрузка файлов Minecraft ${GAME.minecraftVersion}`,
+        detail,
         {
           downloadedBytes: written,
           totalBytes: total,
@@ -237,6 +308,8 @@ function minecraftTaskContext(): TaskContext {
       );
     },
     onResumed() {
+      if (cancelRequested) return;
+      onActivity?.();
       emitProgress({
         ...lastProgress,
         phase: "client",
@@ -265,6 +338,7 @@ async function runDownload(
     pendingFile: `${destination}.part`,
     headers: { "User-Agent": USER_AGENT },
     progressController: (_url, _chunk, written, total) => {
+      if (cancelRequested) return;
       const now = Date.now();
       if (now - lastAt > 300) {
         speed = Math.max(0, (written - lastBytes) / ((now - lastAt) / 1000));
@@ -343,10 +417,10 @@ async function buildRoyaleClient(
     "royale",
     0.77,
     0.07,
-    "Загрузка Royale Master",
+    "Загрузка Vela",
     sha.slice(0, 8),
   );
-  report("build", 0.85, "Сборка Royale Master", "Распаковка исходного кода", {
+  report("build", 0.85, "Сборка Vela", "Распаковка исходного кода", {
     canPause: false,
   });
   await extract(archive, { dir: work });
@@ -355,7 +429,7 @@ async function buildRoyaleClient(
     (name) => name.toLowerCase() === "gradlew.bat",
   );
   if (!wrapper)
-    throw new Error("В исходном коде Royale Master не найден gradlew.bat");
+    throw new Error("В исходном коде Vela не найден gradlew.bat");
   const projectRoot = dirname(wrapper);
   const javaHome = dirname(dirname(javaPath));
   let lineCount = 0;
@@ -378,7 +452,7 @@ async function buildRoyaleClient(
         report(
           "build",
           Math.min(0.95, 0.86 + lineCount * 0.002),
-          "Сборка Royale Master",
+          "Сборка Vela",
           line.slice(0, 180),
           { canPause: false },
         );
@@ -414,47 +488,56 @@ async function buildRoyaleClient(
 
 async function installRoyaleClient(
   modsPath: string,
-  javaPath: string,
 ): Promise<void> {
   const remote = await remoteClientInfo();
   if (!remote.update.remoteCommitSha)
-    throw new Error("GitHub не вернул SHA последнего коммита Royale Master");
+    throw new Error("GitHub не вернул SHA последнего коммита Vela");
   const state = await loadState();
   const cacheRoot = join(state.settings.storagePath, ".launcher-cache");
+  const instanceRoot = dirname(modsPath);
   await fs.mkdir(cacheRoot, { recursive: true });
   const staged = join(
     cacheRoot,
     `royale-client-${remote.update.remoteCommitSha}.jar`,
   );
+  const cachedSize = await fs
+    .stat(staged)
+    .then((stat) => stat.size)
+    .catch(() => 0);
 
-  if (remote.asset) {
+  if (cachedSize < 1024) {
+    if (!remote.asset)
+      throw new Error(
+        "Для текущей версии Vela ещё нет готовой сборки. Локальная Gradle-сборка при запуске отключена.",
+      );
     await runDownload(
       remote.asset.url,
       staged,
       "royale",
       0.78,
       0.15,
-      "Загрузка Royale Master",
+      "Загрузка Vela",
       remote.asset.name,
     );
   } else {
-    const built = await buildRoyaleClient(
-      remote.update.remoteCommitSha,
-      javaPath,
-      cacheRoot,
+    report(
+      "royale",
+      0.92,
+      "Vela готов",
+      "Используем проверенный локальный кэш",
+      { canPause: false },
     );
-    await fs.copyFile(built, staged);
   }
 
   if ((await fs.stat(staged)).size < 1024)
-    throw new Error("Собранный JAR Royale Master повреждён");
+    throw new Error("Собранный JAR Vela повреждён");
   let oldJar: string | null = null;
   try {
     oldJar =
       (
         JSON.parse(
           await fs.readFile(
-            join(state.settings.storagePath, ".royale-client.json"),
+            join(instanceRoot, ".royale-client.json"),
             "utf8",
           ),
         ) as { jarName?: string }
@@ -468,7 +551,7 @@ async function installRoyaleClient(
   if (oldJar && oldJar !== jarName)
     await fs.rm(join(modsPath, oldJar), { force: true });
   await fs.writeFile(
-    join(state.settings.storagePath, ".royale-client.json"),
+    join(instanceRoot, ".royale-client.json"),
     JSON.stringify(
       {
         jarName,
@@ -485,28 +568,87 @@ async function installRoyaleClient(
     installedCommitSha: remote.update.remoteCommitSha,
     installedClientVersion: remote.update.remoteVersion,
   });
-  await fs.rm(staged, { force: true });
+}
+
+async function ensureRoyaleClientHealthy(
+  storagePath: string,
+): Promise<void> {
+  let jarName = "";
+  try {
+    jarName =
+      (
+        JSON.parse(
+          await fs.readFile(join(storagePath, ".royale-client.json"), "utf8"),
+        ) as { jarName?: string }
+      ).jarName ?? "";
+  } catch {
+    /* install metadata will be recreated below */
+  }
+  const path = jarName ? join(storagePath, "mods", jarName) : "";
+  if (path && (await isJarStructurallyValid(path))) return;
+  emitLaunch({
+    state: "launching",
+    message: "Восстанавливаем Vela",
+  });
+  await installRoyaleClient(join(storagePath, "mods"));
 }
 
 export async function pauseInstall(): Promise<boolean> {
-  if (!currentTask?.isRunning) return false;
-  await currentTask.pause();
-  return true;
+  const task = currentTask;
+  if (!task?.isRunning) return false;
+  await task.pause();
+  return task.isPaused;
 }
 
 export async function resumeInstall(): Promise<boolean> {
-  if (!currentTask?.isPaused) return false;
-  await currentTask.resume();
-  return true;
+  const task = currentTask;
+  if (!task?.isPaused) return false;
+  await task.resume();
+  return task.isRunning;
 }
 
 export async function cancelInstall(): Promise<boolean> {
-  const hadActiveInstall = Boolean(currentTask || buildProcess);
+  const task = currentTask;
+  const process = buildProcess;
+  const hadActiveInstall = Boolean(task || process);
   cancelRequested = true;
-  if (currentTask && !currentTask.isDone)
-    await currentTask.cancel().catch(() => undefined);
-  if (buildProcess) buildProcess.kill();
+  currentTask = null;
+  buildProcess = null;
+  if (task?.isPaused) await task.resume().catch(() => undefined);
+  if (task && !task.isDone) await task.cancel(1_200).catch(() => undefined);
+  if (process) process.kill();
   return hadActiveInstall;
+}
+
+function installationErrorMessage(error: unknown): string {
+  const messages: string[] = [];
+  const visit = (value: unknown): void => {
+    if (!value) return;
+    if (value instanceof AggregateError) {
+      for (const nested of value.errors) visit(nested);
+      if (value.cause) visit(value.cause);
+      return;
+    }
+    if (value instanceof Error) {
+      if (value.message && !/^aggregate\s*error$/i.test(value.message))
+        messages.push(value.message);
+      if (value.cause) visit(value.cause);
+      return;
+    }
+    if (typeof value === "string" && value.trim()) messages.push(value.trim());
+  };
+  visit(error);
+  const unique = [...new Set(messages.map((message) => message.trim()))];
+  if (!unique.length)
+    return "Не удалось подключиться к серверу загрузки. Проверьте интернет и повторите попытку.";
+  const useful = unique.filter(
+    (message) =>
+      !/^aggregate\s*error$/i.test(message) &&
+      !/^fetch failed$/i.test(message) &&
+      !/^error$/i.test(message),
+  );
+  const joined = (useful.length ? useful : unique).slice(0, 2).join(" · ");
+  return joined.length > 280 ? `${joined.slice(0, 277)}…` : joined;
 }
 
 export async function installGame(): Promise<void> {
@@ -515,11 +657,10 @@ export async function installGame(): Promise<void> {
   try {
     const state = await loadState();
     let java = await detectJava(state.settings.javaPath);
-    if (!java?.valid && state.settings.autoInstallJava)
-      java = await installJava21();
+    if (!java?.valid) java = await installJava21();
     if (!java?.valid)
       throw new Error(
-        `Для установки Royale Master нужна Java ${GAME.javaMajor}+`,
+        `Для установки Vela нужна Java ${GAME.javaMajor}+`,
       );
 
     const dir = await gameDir();
@@ -541,12 +682,63 @@ export async function installGame(): Promise<void> {
         `Версия Minecraft ${GAME.minecraftVersion} не найдена в официальном манифесте`,
       );
 
-    const task = installTask(meta, folder);
-    currentTask = task;
-    const resolved: ResolvedVersion = await task.startAndWait(
-      minecraftTaskContext(),
-    );
-    currentTask = null;
+    let resolved: ResolvedVersion | null = null;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const task = installTask(meta, folder);
+      let lastActivity = Date.now();
+      let stalled = false;
+      currentTask = task;
+      const watchdog = setInterval(() => {
+        if (
+          task.isRunning &&
+          !task.isPaused &&
+          Date.now() - lastActivity > 45_000
+        ) {
+          stalled = true;
+          void task.cancel().catch(() => undefined);
+        }
+      }, 5_000);
+      try {
+        resolved = await task.startAndWait(
+          minecraftTaskContext(task, () => {
+            lastActivity = Date.now();
+          }),
+        );
+        currentTask = null;
+        break;
+      } catch (cause) {
+        currentTask = null;
+        if (
+          cancelRequested ||
+          (cause instanceof CancelledError && !stalled) ||
+          attempt === 3
+        ) {
+          throw stalled
+            ? new Error(
+                "Загрузка не получала данные больше 45 секунд. Проверьте соединение и повторите попытку.",
+              )
+            : cause;
+        }
+        report(
+          "metadata",
+          lastProgress.progress,
+          stalled
+            ? "Загрузка остановилась — продолжаем"
+            : "Повторное подключение",
+          `Автоматическая попытка ${attempt + 1} из 3`,
+          { canPause: false },
+        );
+        await new Promise<void>((resolve) =>
+          setTimeout(resolve, 700 * attempt),
+        );
+      } finally {
+        clearInterval(watchdog);
+      }
+    }
+    if (!resolved)
+      throw new Error(
+        "Не удалось загрузить Minecraft после трёх попыток. Проверьте соединение.",
+      );
     if (cancelRequested) throw new Error("Установка отменена");
 
     report(
@@ -570,12 +762,15 @@ export async function installGame(): Promise<void> {
 
     const modsPath = join(dir, "mods");
     await fs.mkdir(modsPath, { recursive: true });
-    await installRoyaleClient(modsPath, java.path);
+    await installRoyaleClient(modsPath);
+    await repairInstalledMods((message) =>
+      report("verify", 0.95, message, undefined, { canPause: false }),
+    );
     report(
       "verify",
       0.97,
       "Проверка файлов",
-      "Minecraft, Fabric, Fabric API и Royale Master",
+      "Minecraft, Fabric, Fabric API и Vela",
       { canPause: false },
     );
     await Version.parse(folder, fabricVersionId());
@@ -584,14 +779,14 @@ export async function installGame(): Promise<void> {
       "done",
       1,
       "Готово к запуску",
-      `Royale Master ${GAME.clientVersion}`,
+      `Vela ${GAME.clientVersion}`,
       { canPause: false },
     );
     void resolved;
   } catch (error) {
     currentTask = null;
     buildProcess = null;
-    const message = error instanceof Error ? error.message : String(error);
+    const message = installationErrorMessage(error);
     if (
       cancelRequested ||
       error instanceof CancelledError ||
@@ -599,12 +794,11 @@ export async function installGame(): Promise<void> {
       /отмен/i.test(message)
     ) {
       report("idle", 0, "Установка отменена");
-      cancelRequested = false;
       return;
     } else {
       report("error", lastProgress.progress, "Ошибка установки", message);
     }
-    throw error;
+    throw new Error(message);
   }
 }
 
@@ -674,33 +868,192 @@ async function ensureAuthlibInjector(storagePath: string): Promise<string> {
   return jar;
 }
 
-export async function launchGame(account: StoredAccount): Promise<void> {
-  const state = await loadState();
-  const dir = state.settings.storagePath;
-  const folder = MinecraftFolder.from(dir);
-  const id = fabricVersionId();
-  if (!existsSync(folder.getVersionJson(id))) {
-    emitLaunch({ state: "error", message: "Игра не установлена" });
-    return;
+function librariesFromLaunchError(error: unknown): ResolvedLibrary[] | null {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "error" in error &&
+    error.error === "MissingLibraries" &&
+    "libraries" in error &&
+    Array.isArray(error.libraries)
+  ) {
+    return error.libraries as ResolvedLibrary[];
   }
+  return null;
+}
 
-  let java = await detectJava(state.settings.javaPath);
-  if (!java?.valid && state.settings.autoInstallJava)
-    java = await installJava21();
-  if (!java?.valid) {
+async function repairLaunchFiles(
+  folder: MinecraftFolder,
+  versionId: string,
+  initial: ResolvedVersion,
+  quickLaunch: boolean,
+): Promise<ResolvedVersion> {
+  let resolved = initial;
+  let versionBroken = !existsSync(
+    folder.getVersionJar(resolved.minecraftVersion),
+  );
+  if (!quickLaunch && !versionBroken) {
+    try {
+      await LaunchPrecheck.checkVersion(
+        folder,
+        resolved,
+        {} as Parameters<typeof LaunchPrecheck.checkVersion>[2],
+      );
+    } catch {
+      versionBroken = true;
+    }
+  }
+  if (versionBroken) {
     emitLaunch({
-      state: "error",
-      message: `Не найдена Java ${GAME.javaMajor}+. Установите её в настройках.`,
+      state: "launching",
+      message: "Восстанавливаем файлы Minecraft",
     });
-    return;
+    const list = await getVersionList();
+    const metadata = list.versions.find(
+      (entry) => entry.id === resolved.minecraftVersion,
+    );
+    if (!metadata)
+      throw new Error(
+        `Не удалось найти Minecraft ${resolved.minecraftVersion} для восстановления.`,
+      );
+    await installVersionTask(metadata, folder).startAndWait();
+    resolved = await Version.parse(folder, versionId);
   }
 
-  emitLaunch({ state: "launching", message: "Подготовка запуска" });
-  await setDiscordActivity({
-    details: "Запускает Royale Master",
-    state: `Minecraft ${GAME.minecraftVersion}`,
-  });
+  let missingLibraries: ResolvedLibrary[] = [];
+  if (quickLaunch) {
+    missingLibraries = resolved.libraries.filter(
+      (library) => !existsSync(folder.getLibraryByPath(library.download.path)),
+    );
+  } else {
+    try {
+      await LaunchPrecheck.checkLibraries(
+        folder,
+        resolved,
+        {} as Parameters<typeof LaunchPrecheck.checkLibraries>[2],
+      );
+    } catch (error) {
+      const libraries = librariesFromLaunchError(error);
+      if (!libraries) throw error;
+      missingLibraries = libraries;
+    }
+  }
+  if (missingLibraries.length) {
+    emitLaunch({
+      state: "launching",
+      message: `Докачиваем ${missingLibraries.length} библиотек`,
+    });
+    await installResolvedLibrariesTask(missingLibraries, folder, {
+      librariesDownloadConcurrency: 8,
+    }).startAndWait();
+  }
+
+  if (!quickLaunch) {
+    const indexCandidates = [
+      folder.getAssetsIndex(resolved.assets),
+      resolved.assetIndex?.sha1
+        ? folder.getAssetsIndex(resolved.assetIndex.sha1)
+        : "",
+    ].filter(Boolean);
+    let index:
+      | {
+          objects?: Record<string, { hash: string; size: number }>;
+        }
+      | undefined;
+    for (const candidate of indexCandidates) {
+      try {
+        index = JSON.parse(
+          await fs.readFile(candidate, "utf8"),
+        ) as typeof index;
+        break;
+      } catch {
+        /* try the next supported asset-index name */
+      }
+    }
+    if (!index?.objects) {
+      emitLaunch({
+        state: "launching",
+        message: "Восстанавливаем ассеты Minecraft",
+      });
+      await installAssetsTask(resolved, {
+        assetsDownloadConcurrency: 16,
+        prevalidSizeOnly: true,
+      }).startAndWait();
+    } else {
+      const unique = new Map<
+        string,
+        { name: string; hash: string; size: number }
+      >();
+      for (const [name, asset] of Object.entries(index.objects)) {
+        if (!unique.has(asset.hash)) unique.set(asset.hash, { name, ...asset });
+      }
+      const missing = (
+        await Promise.all(
+          [...unique.values()].map(async (asset) => {
+            const size = await fs
+              .stat(folder.getAsset(asset.hash))
+              .then((stat) => stat.size)
+              .catch(() => -1);
+            return size === asset.size ? null : asset;
+          }),
+        )
+      ).filter((asset): asset is { name: string; hash: string; size: number } =>
+        Boolean(asset),
+      );
+      if (missing.length) {
+        emitLaunch({
+          state: "launching",
+          message: `Докачиваем ${missing.length} файлов игры`,
+        });
+        await installResolvedAssetsTask(missing, folder, {
+          assetsDownloadConcurrency: 16,
+          prevalidSizeOnly: true,
+        }).startAndWait();
+      }
+    }
+  }
+  return Version.parse(folder, versionId);
+}
+
+export async function launchGame(account: StoredAccount): Promise<void> {
+  if (launchInProgress || activeMinecraftProcess)
+    throw new Error("Minecraft уже запускается");
+  const generation = ++launchGeneration;
+  const cancelled = (): boolean => generation !== launchGeneration;
+  launchInProgress = true;
   try {
+    const state = await loadState();
+    if (cancelled()) return;
+    const dir = await gameDir();
+    const instance = state.instances.find(
+      (item) => item.id === state.activeInstanceId,
+    );
+    const folder = MinecraftFolder.from(dir);
+    const id = fabricVersionId();
+    if (!existsSync(folder.getVersionJson(id))) {
+      emitLaunch({ state: "error", message: "Игра не установлена" });
+      if (generation === launchGeneration) launchInProgress = false;
+      return;
+    }
+
+    let java = await detectJava(instance?.javaPath ?? state.settings.javaPath);
+    if (!java?.valid) java = await installJava21();
+    if (cancelled()) return;
+    if (!java?.valid) {
+      emitLaunch({
+        state: "error",
+        message: `Не найдена Java ${GAME.javaMajor}+. Установите её в настройках.`,
+      });
+      if (generation === launchGeneration) launchInProgress = false;
+      return;
+    }
+
+    emitLaunch({ state: "launching", message: "Подготовка запуска" });
+    await setDiscordActivity({
+      details: "Запускает Vela",
+      state: `Minecraft ${GAME.minecraftVersion}`,
+    });
+    if (cancelled()) return;
     if (state.settings.preLaunchCommand.trim()) {
       emitLaunch({
         state: "launching",
@@ -712,7 +1065,22 @@ export async function launchGame(account: StoredAccount): Promise<void> {
         env: environmentFromText(state.settings.environmentVariables),
       });
     }
-    const resolved = await Version.parse(folder, id);
+    if (cancelled()) return;
+    let resolved = await Version.parse(folder, id);
+    emitLaunch({ state: "launching", message: "Проверяем файлы игры" });
+    resolved = await repairLaunchFiles(
+      folder,
+      id,
+      resolved,
+      state.settings.quickLaunch,
+    );
+    if (cancelled()) return;
+    // Lightweight damage (partial/corrupt Modrinth archives) is repaired
+    // silently before Fabric sees it. The launch button keeps one calm status
+    // instead of exposing technical recovery work to the player.
+    await repairInstalledMods();
+    await ensureRoyaleClientHealthy(dir);
+    if (cancelled()) return;
     const automaticMax = Math.min(
       8192,
       Math.max(
@@ -738,6 +1106,7 @@ export async function launchGame(account: StoredAccount): Promise<void> {
     const environment = environmentFromText(
       state.settings.environmentVariables,
     );
+    if (state.settings.devMode) environment.ROYALE_LAUNCHER_DEV_MODE = "1";
     if (state.settings.gpuDedicated && state.settings.gpuProfile !== "power") {
       environment.SHIM_MCCOMPAT = "0x800000001";
       environment.__NV_PRIME_RENDER_OFFLOAD = "1";
@@ -759,6 +1128,9 @@ export async function launchGame(account: StoredAccount): Promise<void> {
         ? [LaunchPrecheck.checkVersion, LaunchPrecheck.checkLibraries]
         : undefined;
 
+    const developerJvmArgs = state.settings.devMode
+      ? ["-Droyale.launcher.devMode=true"]
+      : [];
     const process = await launch({
       gamePath: dir,
       resourcePath: dir,
@@ -766,7 +1138,7 @@ export async function launchGame(account: StoredAccount): Promise<void> {
       version: resolved,
       minMemory,
       maxMemory,
-      extraJVMArgs: splitArgs(state.settings.jvmArgs),
+      extraJVMArgs: [...splitArgs(state.settings.jvmArgs), ...developerJvmArgs],
       extraMCArgs: splitArgs(state.settings.minecraftArgs),
       extraExecOption: { env: environment, windowsHide: true },
       prechecks,
@@ -776,32 +1148,94 @@ export async function launchGame(account: StoredAccount): Promise<void> {
       },
       accessToken: account.accessToken ?? "0",
       userType: account.type === "offline" ? "legacy" : "mojang",
-      launcherName: "RoyaleLauncher",
+      launcherName: "VelaLauncher",
       launcherBrand: BRAND.name,
       yggdrasilAgent:
         authlibJar && authServer
           ? { jar: authlibJar, server: authServer }
           : undefined,
     });
+    if (cancelled()) {
+      process.kill();
+      return;
+    }
+    activeMinecraftProcess = process;
 
     const watcher = createMinecraftProcessWatcher(process);
-    emitLaunch({ state: "running", message: "Игра запущена" });
-    await setDiscordActivity({
-      details: "Играет в Royale Master",
-      state: account.username,
-      startedAt: Date.now(),
-    });
-    if (state.settings.closeOnLaunch) BrowserWindow.getAllWindows()[0]?.hide();
-    const started = Date.now();
-    watcher.on("error", (error) =>
-      emitLaunch({
-        state: "error",
-        message: error instanceof Error ? error.message : String(error),
-      }),
+    const launcherWindow = BrowserWindow.getAllWindows()[0];
+    const logWindow = state.settings.showLog ? createGameLogWindow() : null;
+    let logStream: ReturnType<typeof createWriteStream> | null = null;
+    let recentOutput = "";
+    if (state.settings.devMode) {
+      const logDirectory = join(dir, "logs");
+      await fs.mkdir(logDirectory, { recursive: true });
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      logStream = createWriteStream(
+        join(logDirectory, `royale-launch-${timestamp}.log`),
+        { flags: "a" },
+      );
+      logStream.write(
+        `[Vela Launcher] Minecraft ${GAME.minecraftVersion}, PID ${process.pid ?? "unknown"}\n`,
+      );
+    }
+    const pipeLog = (
+      chunk: Buffer | string,
+      kind: "stdout" | "stderr",
+    ): void => {
+      const text = chunk.toString();
+      recentOutput = `${recentOutput}${text}`.slice(-32_000);
+      logStream?.write(`[${kind}] ${text}`);
+      appendGameLog(logWindow, text, kind === "stderr" ? "stderr" : "");
+    };
+    process.stdout?.on("data", (chunk: Buffer | string) =>
+      pipeLog(chunk, "stdout"),
     );
+    process.stderr?.on("data", (chunk: Buffer | string) =>
+      pipeLog(chunk, "stderr"),
+    );
+    let minecraftWindowReady = false;
+    let launcherHidden = false;
+    const started = Date.now();
+    watcher.once("minecraft-window-ready", () => {
+      if (cancelled()) return;
+      if (minecraftWindowReady) return;
+      minecraftWindowReady = true;
+      emitLaunch({ state: "running", message: "Игра запущена" });
+      void setDiscordActivity({
+        details: "Играет в Vela",
+        state: account.username,
+        startedAt: Date.now(),
+      });
+      if (state.settings.closeOnLaunch && launcherWindow) {
+        launcherHidden = true;
+        launcherWindow.hide();
+      }
+    });
+    watcher.on("error", (error) => {
+      if (activeMinecraftProcess === process) activeMinecraftProcess = null;
+      if (cancelled()) return;
+      if (generation === launchGeneration) launchInProgress = false;
+      emitLaunch({
+        state: "crashed",
+        message: error instanceof Error ? error.message : String(error),
+        crashReport:
+          error instanceof Error ? error.stack || error.message : String(error),
+      });
+    });
     watcher.on(
       "minecraft-exit",
       ({ code, crashReport, crashReportLocation }) => {
+        if (activeMinecraftProcess === process) activeMinecraftProcess = null;
+        if (generation === launchGeneration) launchInProgress = false;
+        logStream?.end(
+          `\n[Vela Launcher] Процесс завершён с кодом ${code ?? 0}.\n`,
+        );
+        appendGameLog(
+          logWindow,
+          `\nПроцесс Minecraft завершён с кодом ${code ?? 0}.\n`,
+          "system",
+        );
+        if (cancelled()) return;
         const minutes = Math.max(
           0,
           Math.round((Date.now() - started) / 60_000),
@@ -810,26 +1244,54 @@ export async function launchGame(account: StoredAccount): Promise<void> {
           lastPlayed: Date.now(),
           playtimeMinutes: state.stats.playtimeMinutes + minutes,
         });
-        BrowserWindow.getAllWindows()[0]?.show();
+        if (launcherWindow && (launcherHidden || !launcherWindow.isVisible())) {
+          launcherWindow.show();
+          launcherWindow.focus();
+        }
         void setDiscordActivity({ details: "В главном меню" });
+        const failed = Boolean(crashReport) || (code ?? 0) !== 0;
         emitLaunch(
-          crashReport
+          failed
             ? {
                 state: "crashed",
-                message: "Royale Master завершился с ошибкой",
+                message: "Vela завершился с ошибкой",
                 code,
-                crashReport,
+                crashReport:
+                  crashReport ||
+                  recentOutput ||
+                  `Minecraft завершился с кодом ${code ?? "неизвестно"}.`,
                 crashReportLocation,
               }
             : { state: "exited", code },
         );
       },
     );
+    if (generation === launchGeneration) launchInProgress = false;
   } catch (error) {
+    if (generation === launchGeneration) launchInProgress = false;
+    if (cancelled()) return;
+    const process = activeMinecraftProcess;
+    activeMinecraftProcess = null;
+    if (process && !process.killed) process.kill();
     emitLaunch({
-      state: "error",
+      state: "crashed",
       message: error instanceof Error ? error.message : String(error),
+      crashReport:
+        error instanceof Error ? error.stack || error.message : String(error),
     });
     await setDiscordActivity({ details: "В главном меню" });
   }
+}
+
+export async function cancelLaunch(): Promise<boolean> {
+  if (!launchInProgress && !activeMinecraftProcess) return false;
+  const process = activeMinecraftProcess;
+  launchGeneration += 1;
+  launchInProgress = false;
+  activeMinecraftProcess = null;
+  if (process && !process.killed) {
+    process.kill();
+  }
+  emitLaunch({ state: "exited", code: 0 });
+  return true;
 }

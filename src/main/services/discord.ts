@@ -26,8 +26,8 @@ async function publish(): Promise<void> {
       instance: false,
       buttons: [
         {
-          label: "Royale Master",
-          url: "https://github.com/SqwaTik/Royale-Master",
+          label: "Vela",
+          url: "https://github.com/SqwaTik/VelaLauncher",
         },
       ],
     })

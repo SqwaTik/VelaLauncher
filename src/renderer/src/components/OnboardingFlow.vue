@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import Icon from "./Icon.vue";
 import { GAME } from "@shared/constants";
 import { useAccountStore } from "@/stores/account";
@@ -10,9 +10,22 @@ const account = useAccountStore();
 const settings = useSettingsStore();
 const step = ref(0);
 const playerName = ref("");
+const accountMode = ref<"offline" | "ely" | "littleskin">("offline");
+const elyLogin = ref("");
+const elyPassword = ref("");
+const elyTotp = ref("");
+const littleSkinLogin = ref("");
+const littleSkinPassword = ref("");
 const error = ref("");
 const steps = ["Знакомство", "Профиль", "Java", "Готово"];
 const javaReady = computed(() => Boolean(settings.java?.valid));
+const accountBusy = computed(() => account.elyBusy || account.littleSkinBusy);
+const accountCanSubmit = computed(() => {
+  if (accountMode.value === "offline") return Boolean(playerName.value.trim());
+  if (accountMode.value === "ely")
+    return Boolean(elyLogin.value.trim() && elyPassword.value);
+  return Boolean(littleSkinLogin.value.trim() && littleSkinPassword.value);
+});
 
 function stepMarker(index: number): string | number {
   return index < step.value ? "✓" : index + 1;
@@ -24,11 +37,32 @@ function stepDone(index: number): boolean {
 function next(): void {
   step.value = Math.min(steps.length - 1, step.value + 1);
 }
-function addProfile(): void {
-  if (playerName.value.trim()) account.addOffline(playerName.value);
-  next();
+async function addProfile(): Promise<void> {
+  if (!accountCanSubmit.value || accountBusy.value) return;
+  error.value = "";
+  try {
+    if (accountMode.value === "offline") {
+      account.addOffline(playerName.value);
+    } else if (accountMode.value === "ely") {
+      await account.addEly({
+        username: elyLogin.value.trim(),
+        password: elyPassword.value,
+        totp: elyTotp.value.trim() || undefined,
+      });
+    } else {
+      await account.addLittleSkin({
+        username: littleSkinLogin.value.trim(),
+        password: littleSkinPassword.value,
+      });
+    }
+    next();
+  } catch (cause) {
+    error.value =
+      cause instanceof Error ? cause.message : "Не удалось войти в профиль.";
+  }
 }
 async function installJava(): Promise<void> {
+  if (settings.installingJava || javaReady.value) return;
   error.value = "";
   try {
     await settings.installJava();
@@ -36,6 +70,10 @@ async function installJava(): Promise<void> {
     error.value = cause instanceof Error ? cause.message : String(cause);
   }
 }
+watch(step, (value) => {
+  error.value = "";
+  if (value === 2 && !javaReady.value) void installJava();
+});
 async function finish(): Promise<void> {
   if (!settings.settings) return;
   settings.settings.onboardingCompleted = true;
@@ -66,21 +104,18 @@ async function finish(): Promise<void> {
               <p class="eyebrow">Добро пожаловать</p>
               <h1>Здравствуйте, это Vela Launcher</h1>
               <p>
-                Лаунчер установит Minecraft {{ GAME.minecraftVersion }}, Fabric,
-                Fabric API, Royale Master и подходящую Java. Все файлы хранятся
-                отдельно в папке <code>.royale</code>.
+                Vela собирает игру, профили и настройки в одном спокойном
+                интерфейсе. После знакомства останется выбрать профиль и нажать
+                одну кнопку на главной.
               </p>
               <div class="tour-feature">
-                <span
-                  ><Icon name="download" :size="18" /><b
-                    >Реальная установка</b
+                <span><Icon name="play" :size="18" /><b>Быстрый старт</b></span
+                ><span
+                  ><Icon name="palette" :size="18" /><b
+                    >Свой внешний вид</b
                   ></span
                 ><span
-                  ><Icon name="mods" :size="18" /><b
-                    >Modrinth и зависимости</b
-                  ></span
-                ><span
-                  ><Icon name="palette" :size="18" /><b>Skin Studio</b></span
+                  ><Icon name="shield" :size="18" /><b>Проверка файлов</b></span
                 >
               </div>
             </div>
@@ -88,25 +123,96 @@ async function finish(): Promise<void> {
               <p class="eyebrow">Шаг 2</p>
               <h1>Добавьте игровой профиль</h1>
               <p>
-                Можно создать автономный профиль сейчас или позже войти через
-                Ely.by или LittleSkin.
+                Выберите сервис и войдите. Данные передаются только выбранному
+                серверу авторизации и сохраняются локально на этом компьютере.
               </p>
-              <label
-                ><span>Имя игрока</span
-                ><input
-                  v-model="playerName"
-                  class="field"
-                  maxlength="16"
-                  placeholder="Например, Steve"
-                  @keydown.enter="addProfile"
-              /></label>
+              <div class="provider-tabs">
+                <button
+                  :class="{ active: accountMode === 'offline' }"
+                  @click="accountMode = 'offline'"
+                >
+                  <i>O</i
+                  ><span><b>Автономный</b><small>Без сервера</small></span>
+                </button>
+                <button
+                  :class="{ active: accountMode === 'ely' }"
+                  @click="accountMode = 'ely'"
+                >
+                  <i>E</i><span><b>Ely.by</b><small>Yggdrasil</small></span>
+                </button>
+                <button
+                  :class="{ active: accountMode === 'littleskin' }"
+                  @click="accountMode = 'littleskin'"
+                >
+                  <i>L</i><span><b>LittleSkin</b><small>Yggdrasil</small></span>
+                </button>
+              </div>
+              <div class="account-fields">
+                <label v-if="accountMode === 'offline'"
+                  ><span>Имя игрока</span
+                  ><input
+                    v-model="playerName"
+                    class="field"
+                    maxlength="16"
+                    placeholder="Например, Steve"
+                    @keydown.enter="addProfile"
+                /></label>
+                <template v-else-if="accountMode === 'ely'">
+                  <label
+                    ><span>Логин Ely.by</span
+                    ><input
+                      v-model="elyLogin"
+                      class="field"
+                      autocomplete="username"
+                      placeholder="Почта или имя"
+                  /></label>
+                  <label
+                    ><span>Пароль</span
+                    ><input
+                      v-model="elyPassword"
+                      class="field"
+                      type="password"
+                      autocomplete="current-password"
+                      @keydown.enter="addProfile"
+                  /></label>
+                  <label
+                    ><span>Код 2FA, если включён</span
+                    ><input
+                      v-model="elyTotp"
+                      class="field"
+                      inputmode="numeric"
+                      maxlength="8"
+                  /></label>
+                </template>
+                <template v-else>
+                  <label
+                    ><span>Логин LittleSkin</span
+                    ><input
+                      v-model="littleSkinLogin"
+                      class="field"
+                      autocomplete="username"
+                      placeholder="Почта или имя"
+                  /></label>
+                  <label
+                    ><span>Пароль</span
+                    ><input
+                      v-model="littleSkinPassword"
+                      class="field"
+                      type="password"
+                      autocomplete="current-password"
+                      @keydown.enter="addProfile"
+                  /></label>
+                </template>
+              </div>
+              <p v-if="error" class="tour-error">{{ error }}</p>
             </div>
             <div v-else-if="step === 2" key="java" class="tour-page">
               <p class="eyebrow">Шаг 3</p>
               <h1>Java {{ GAME.javaMajor }} для Minecraft</h1>
               <p>
-                Royale использует переносимый Eclipse Temurin. Установка не
-                меняет системную Java и не требует ручной настройки PATH.
+                Java — среда, в которой работает Minecraft. Если подходящей
+                версии нет, Vela загрузит её в собственную папку автоматически
+                и не изменит системные настройки.
               </p>
               <div class="java-state" :class="{ ok: javaReady }">
                 <span
@@ -123,28 +229,33 @@ async function finish(): Promise<void> {
                   }}</small>
                 </div>
               </div>
+              <div v-if="settings.installingJava" class="java-progress">
+                <Icon name="spinner" :size="17" class="spin" /><span
+                  ><b
+                    >{{
+                      Math.round(
+                        (settings.javaInstallProgress?.progress || 0) * 100,
+                      )
+                    }}%</b
+                  ><small>{{
+                    settings.javaInstallProgress?.message ||
+                    "Подготавливаем Java…"
+                  }}</small></span
+                >
+              </div>
               <button
-                v-if="!javaReady"
-                class="btn btn-primary java-install"
-                :disabled="settings.installingJava"
+                v-else-if="!javaReady && error"
+                class="btn java-install"
                 @click="installJava"
               >
-                <Icon
-                  :name="settings.installingJava ? 'spinner' : 'download'"
-                  :size="17"
-                  :class="{ spin: settings.installingJava }"
-                />{{
-                  settings.installingJava
-                    ? `${Math.round((settings.javaInstallProgress?.progress || 0) * 100)}% · ${settings.javaInstallProgress?.message || "Установка"}`
-                    : `Установить Java ${GAME.javaMajor}`
-                }}
+                <Icon name="refresh" :size="17" />Повторить
               </button>
               <p v-if="error" class="tour-error">{{ error }}</p>
             </div>
             <div v-else key="done" class="tour-page done-page">
-              <img :src="logo" alt="" />
+              <span class="done-mark"><Icon name="check" :size="34" /></span>
               <p class="eyebrow">Всё настроено</p>
-              <h1>Royale готов к работе</h1>
+              <h1>Vela готов к работе</h1>
               <p>
                 На главной нажмите «Установить». Во время загрузки можно
                 поставить процесс на паузу, а подробный этап всегда показан
@@ -169,17 +280,18 @@ async function finish(): Promise<void> {
               ><button class="btn btn-ghost" @click="next">Пропустить</button
               ><button
                 class="btn btn-primary"
-                :disabled="!playerName.trim()"
+                :disabled="!accountCanSubmit || accountBusy"
                 @click="addProfile"
               >
-                Добавить и далее
+                {{ accountBusy ? "Входим…" : "Продолжить" }}
               </button></template
             ><button
               v-else-if="step === 2"
               class="btn btn-primary"
+              :disabled="settings.installingJava"
               @click="next"
             >
-              {{ javaReady ? "Далее" : "Пропустить" }}</button
+              {{ javaReady ? "Далее" : "Продолжить без Java" }}</button
             ><button v-else class="btn btn-primary" @click="finish">
               Открыть лаунчер
             </button>
@@ -201,10 +313,10 @@ async function finish(): Promise<void> {
   background:
     radial-gradient(
       800px 500px at 50% 25%,
-      rgba(67, 190, 94, 0.16),
+      rgba(118, 104, 255, 0.18),
       transparent 68%
     ),
-    #080d0a;
+    #090a12;
 }
 .tour {
   width: min(920px, 100%);
@@ -213,13 +325,13 @@ async function finish(): Promise<void> {
   grid-template-columns: 230px 1fr;
   overflow: hidden;
   border-radius: 24px;
-  background: #101612;
+  background: #11131d;
   border: 1px solid var(--hairline-strong);
   box-shadow: 0 35px 120px #000c;
 }
 .tour > aside {
   padding: 30px 24px;
-  background: linear-gradient(165deg, #16251a, #0b110d);
+  background: linear-gradient(165deg, #1a1d31, #0c0e18);
   border-right: 1px solid var(--hairline);
 }
 .tour > aside > img {
@@ -264,9 +376,9 @@ async function finish(): Promise<void> {
 }
 .tour nav span.active i,
 .tour nav span.done i {
-  color: #07130a;
+  color: #f7f5ff;
   background: var(--green);
-  box-shadow: 0 0 18px rgba(83, 195, 106, 0.3);
+  box-shadow: 0 0 18px rgba(118, 104, 255, 0.34);
 }
 .tour > main {
   min-width: 0;
@@ -275,6 +387,7 @@ async function finish(): Promise<void> {
 }
 .tour-page {
   padding: 65px 58px 30px;
+  overflow-y: auto;
 }
 .tour-page h1 {
   max-width: 540px;
@@ -330,6 +443,74 @@ async function finish(): Promise<void> {
 .tour-page label input {
   width: 100%;
 }
+.provider-tabs {
+  max-width: 560px;
+  margin-top: 22px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 7px;
+}
+.provider-tabs button {
+  min-width: 0;
+  padding: 9px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 11px;
+  color: var(--text-3);
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  text-align: left;
+}
+.provider-tabs button:hover,
+.provider-tabs button.active {
+  color: var(--green);
+  border-color: var(--green-line);
+  background: var(--green-soft);
+}
+.provider-tabs i {
+  width: 29px;
+  height: 29px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  border-radius: 8px;
+  color: currentColor;
+  background: rgba(255, 255, 255, 0.045);
+  font: 800 11px var(--font-num);
+  font-style: normal;
+}
+.provider-tabs span,
+.provider-tabs b,
+.provider-tabs small {
+  min-width: 0;
+  display: block;
+}
+.provider-tabs b {
+  overflow: hidden;
+  color: var(--text-1);
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+}
+.provider-tabs small {
+  margin-top: 2px;
+  color: var(--text-3);
+  font-size: 7.5px;
+}
+.account-fields {
+  max-width: 560px;
+  margin-top: 13px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+}
+.account-fields label {
+  max-width: none;
+  margin-top: 0;
+}
+.account-fields label:only-child {
+  grid-column: 1 / -1;
+}
 .java-state {
   max-width: 520px;
   margin-top: 25px;
@@ -372,6 +553,32 @@ async function finish(): Promise<void> {
 .java-install {
   margin-top: 12px;
 }
+.java-progress {
+  max-width: 520px;
+  margin-top: 12px;
+  padding: 11px 13px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: 11px;
+  color: var(--green);
+  background: var(--green-soft);
+  border: 1px solid var(--green-line);
+}
+.java-progress span,
+.java-progress b,
+.java-progress small {
+  display: block;
+}
+.java-progress b {
+  color: var(--text-0);
+  font: 700 10px var(--font-num);
+}
+.java-progress small {
+  margin-top: 3px;
+  color: var(--text-3);
+  font-size: 8.5px;
+}
 .tour-error {
   margin-top: 10px;
   color: var(--danger);
@@ -380,10 +587,16 @@ async function finish(): Promise<void> {
 .done-page {
   text-align: center;
 }
-.done-page > img {
-  width: 112px;
-  height: 112px;
-  object-fit: contain;
+.done-mark {
+  width: 82px;
+  height: 82px;
+  margin: 0 auto 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 24px;
+  color: #f7f5ff;
+  background: var(--green-grad);
+  box-shadow: var(--glow-green);
 }
 .done-page h1,
 .done-page > p {
@@ -434,6 +647,10 @@ async function finish(): Promise<void> {
     padding: 45px 28px 25px;
   }
   .tour-feature {
+    grid-template-columns: 1fr;
+  }
+  .provider-tabs,
+  .account-fields {
     grid-template-columns: 1fr;
   }
   .onboarding {

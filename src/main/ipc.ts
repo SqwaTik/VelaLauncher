@@ -5,6 +5,7 @@ import { totalmem, freemem } from "os";
 import { IPC } from "../shared/constants";
 import type {
   AppSettings,
+  GameInstance,
   StoredAccount,
   ModVersionFile,
   Friend,
@@ -15,7 +16,10 @@ import {
   loadState,
   saveSettings,
   saveAccounts,
+  saveInstances,
   saveFriends,
+  instanceDir,
+  duplicateInstance,
 } from "./services/store";
 import { detectJava, installJava21 } from "./services/java";
 import {
@@ -25,20 +29,21 @@ import {
   pauseInstall,
   resumeInstall,
   cancelInstall,
+  cancelLaunch,
   checkClientUpdate,
 } from "./services/game";
-import {
-  startMicrosoftLogin,
-  cancelMicrosoftLogin,
-  refreshMicrosoft,
-} from "./services/auth";
 import { loginEly, refreshEly } from "./services/ely";
 import { loginLittleSkin, refreshLittleSkin } from "./services/littleskin";
 import { resolveMinecraftProfile } from "./services/profiles";
 import * as modrinth from "./services/modrinth";
+import * as modpacks from "./services/modpacks";
 import * as appearance from "./services/appearance";
 import { contentSummary, listScreenshots } from "./services/content";
 import { setDiscordActivity, syncDiscordSetting } from "./services/discord";
+import {
+  checkLauncherUpdate,
+  installLauncherUpdate,
+} from "./services/launcher-update";
 
 async function readImageDataUrl(path: string): Promise<string> {
   const bytes = await fs.readFile(path);
@@ -76,6 +81,8 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.openExternal, (_e, url: string) =>
     shell.openExternal(url),
   );
+  ipcMain.handle(IPC.appCheckUpdate, () => checkLauncherUpdate());
+  ipcMain.handle(IPC.appInstallUpdate, () => installLauncherUpdate());
   ipcMain.handle(IPC.pickFolder, async () => {
     const w = getWindow();
     if (!w) return null;
@@ -92,6 +99,16 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       filters: [
         { name: "Изображения", extensions: ["png", "jpg", "jpeg", "webp"] },
       ],
+    });
+    return result.canceled ? null : result.filePaths[0];
+  });
+  ipcMain.handle(IPC.pickJava, async () => {
+    const window = getWindow();
+    if (!window) return null;
+    const result = await dialog.showOpenDialog(window, {
+      properties: ["openFile"],
+      filters: [{ name: "Java", extensions: ["exe"] }],
+      defaultPath: "java.exe",
     });
     return result.canceled ? null : result.filePaths[0];
   });
@@ -160,6 +177,20 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     (_e, accounts: StoredAccount[], activeId: string | null) =>
       saveAccounts(accounts, activeId),
   );
+  ipcMain.handle(
+    IPC.instancesSave,
+    (_e, instances: GameInstance[], activeId: string) =>
+      saveInstances(instances, activeId),
+  );
+  ipcMain.handle(IPC.instanceReveal, async (_e, id: string) => {
+    const path = await instanceDir(id);
+    await fs.mkdir(path, { recursive: true });
+    const error = await shell.openPath(path);
+    if (error) throw new Error(error);
+  });
+  ipcMain.handle(IPC.instanceDuplicate, (_e, id: string) =>
+    duplicateInstance(id),
+  );
   ipcMain.handle(IPC.friendsSave, (_e, friends: Friend[]) =>
     saveFriends(friends),
   );
@@ -173,12 +204,6 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   );
   ipcMain.handle(IPC.javaInstall, () => installJava21());
 
-  // ---- microsoft auth ----
-  ipcMain.handle(IPC.authMsStart, () => startMicrosoftLogin(getWindow));
-  ipcMain.handle(IPC.authMsCancel, () => cancelMicrosoftLogin());
-  ipcMain.handle(IPC.authMsRefresh, (_e, account: StoredAccount) =>
-    refreshMicrosoft(account),
-  );
   ipcMain.handle(IPC.authElyLogin, (_e, input: ElyLoginInput) =>
     loginEly(input),
   );
@@ -209,6 +234,19 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       filters: [{ name: "Minecraft skin", extensions: ["png"] }],
     });
     return result.canceled ? null : readImageDataUrl(result.filePaths[0]);
+  });
+  ipcMain.handle(IPC.appearancePickCape, async () => {
+    const window = getWindow();
+    if (!window) return null;
+    const result = await dialog.showOpenDialog(window, {
+      properties: ["openFile"],
+      filters: [{ name: "Minecraft cape", extensions: ["png"] }],
+    });
+    if (result.canceled) return null;
+    const bytes = await fs.readFile(result.filePaths[0]);
+    if (bytes.length > 5 * 1024 * 1024)
+      throw new Error("Плащ слишком большой (максимум 5 МБ).");
+    return `data:image/png;base64,${bytes.toString("base64")}`;
   });
   ipcMain.handle(IPC.appearanceExportSkin, async (_event, dataUrl: string) => {
     const window = getWindow();
@@ -254,6 +292,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.gameLaunch, (_e, account: StoredAccount) =>
     launchGame(account),
   );
+  ipcMain.handle(IPC.gameCancelLaunch, () => cancelLaunch());
 
   // ---- modrinth ----
   ipcMain.handle(
@@ -287,4 +326,80 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.modRemove, (_e, filename: string) =>
     modrinth.removeMod(filename),
   );
+  ipcMain.handle(IPC.modReveal, (_e, filename: string) =>
+    modrinth.revealMod(filename),
+  );
+  ipcMain.handle(
+    IPC.resourceSearch,
+    (_e, query: string, category: string, sort: string, offset: number) =>
+      modrinth.searchResourcePacks(query, category, sort, offset),
+  );
+  ipcMain.handle(IPC.resourceProject, (_e, projectId: string) =>
+    modrinth.project(projectId),
+  );
+  ipcMain.handle(IPC.resourceInstallProject, (_e, projectId: string) =>
+    modrinth.installResourceProject(projectId),
+  );
+  ipcMain.handle(IPC.resourceInstalledList, () => modrinth.listResourcePacks());
+  ipcMain.handle(IPC.resourceRemove, (_e, filename: string) =>
+    modrinth.removeResourcePack(filename),
+  );
+  ipcMain.handle(IPC.resourceReveal, (_e, filename: string) =>
+    modrinth.revealResourcePack(filename),
+  );
+
+  // ---- modrinth / shader packs ----
+  ipcMain.handle(
+    IPC.shaderSearch,
+    (_e, query: string, category: string, sort: string, offset: number) =>
+      modrinth.searchShaders(query, category, sort, offset),
+  );
+  ipcMain.handle(IPC.shaderProject, (_e, projectId: string) =>
+    modrinth.project(projectId),
+  );
+  ipcMain.handle(IPC.shaderInstallProject, (_e, projectId: string) =>
+    modrinth.installShaderProject(projectId),
+  );
+  ipcMain.handle(IPC.shaderInstalledList, () => modrinth.listShaderPacks());
+  ipcMain.handle(IPC.shaderRemove, (_e, filename: string) =>
+    modrinth.removeShaderPack(filename),
+  );
+  ipcMain.handle(IPC.shaderReveal, (_e, filename: string) =>
+    modrinth.revealShaderPack(filename),
+  );
+
+  // ---- modpack import / export ----
+  ipcMain.handle(IPC.modpackImport, async (_event, sourcePath?: string) => {
+    let selected = sourcePath;
+    if (!selected) {
+      const window = getWindow();
+      if (!window) return null;
+      const result = await dialog.showOpenDialog(window, {
+        properties: ["openFile"],
+        filters: [
+          { name: "Сборки Minecraft", extensions: ["mrpack", "zip"] },
+          { name: "Modrinth Modpack", extensions: ["mrpack"] },
+          { name: "ZIP", extensions: ["zip"] },
+        ],
+      });
+      if (result.canceled) return null;
+      selected = result.filePaths[0];
+    }
+    return modpacks.importModpack(selected);
+  });
+  ipcMain.handle(IPC.modpackExport, async () => {
+    const window = getWindow();
+    if (!window) return null;
+    const result = await dialog.showSaveDialog(window, {
+      defaultPath: "Vela.mrpack",
+      filters: [
+        { name: "Modrinth Modpack", extensions: ["mrpack"] },
+        { name: "Обычный ZIP", extensions: ["zip"] },
+      ],
+    });
+    if (result.canceled || !result.filePath) return null;
+    let destination = result.filePath;
+    if (!/\.(mrpack|zip)$/i.test(destination)) destination += ".mrpack";
+    return modpacks.exportModpack(destination);
+  });
 }

@@ -4,22 +4,68 @@ import Icon from "@/components/Icon.vue";
 import UiSwitch from "@/components/ui/UiSwitch.vue";
 import { GAME } from "@shared/constants";
 import { useSettingsStore } from "@/stores/settings";
-import { useLauncherStore } from "@/stores/launcher";
 import { useLocale } from "@/composables/useLocale";
 
 const store = useSettingsStore();
-const launcher = useLauncherStore();
 const { tr } = useLocale();
 const settings = computed(() => store.settings);
 const active = ref("appearance");
 const languageOpen = ref(false);
+const nativeLibrariesOpen = ref(false);
+const javaPathOpen = ref(false);
 const javaError = ref("");
+const launcherVersion = ref("0.1.4");
 const languageLabel = computed(() =>
   settings.value?.language === "en"
     ? "English"
     : settings.value?.language === "es"
       ? "Español"
       : "Русский",
+);
+const launcherUpdateVersion = computed(() => {
+  const update = store.launcherUpdate;
+  if (!update) return `v${launcherVersion.value}`;
+  return update.available
+    ? `v${update.currentVersion} → v${update.latestVersion}`
+    : `v${update.currentVersion}`;
+});
+const launcherUpdateAction = computed(() =>
+  store.launcherUpdateProgress?.phase === "installing"
+    ? tr("Установка…", "Installing…", "Instalando…")
+    : store.launcherUpdateInstalling
+      ? tr(
+          `Загрузка ${Math.floor(store.launcherUpdateProgress?.progress ?? 0)}%`,
+          `Downloading ${Math.floor(store.launcherUpdateProgress?.progress ?? 0)}%`,
+          `Descargando ${Math.floor(store.launcherUpdateProgress?.progress ?? 0)}%`,
+        )
+      : store.launcherUpdate?.available
+        ? tr("Обновить", "Update", "Actualizar")
+        : store.launcherUpdate
+          ? tr("Актуально", "Up to date", "Actualizado")
+          : tr("Проверить", "Check", "Comprobar"),
+);
+const nativeLibraryOptions = [
+  {
+    value: "never",
+    label: "Не заменять",
+    detail: "Использовать уже распакованные файлы",
+  },
+  {
+    value: "old-only",
+    label: "По необходимости",
+    detail: "Исправлять отсутствующие и повреждённые",
+  },
+  {
+    value: "always",
+    label: "Каждый запуск",
+    detail: "Распаковывать нативы заново",
+  },
+] as const;
+const nativeLibraryLabel = computed(
+  () =>
+    nativeLibraryOptions.find(
+      (option) => option.value === settings.value?.replaceNativeLibraries,
+    )?.label ?? "По необходимости",
 );
 
 const sections = [
@@ -62,15 +108,31 @@ const selectedMemory = computed(() => {
   return `${(settings.value.memoryMinMb / 1024).toFixed(1)}–${(settings.value.memoryMb / 1024).toFixed(1)} ГБ`;
 });
 
-let observer: IntersectionObserver | null = null;
 let scrollRoot: HTMLElement | null = null;
-function syncBottomNavigation(): void {
-  if (!scrollRoot) return;
-  if (
-    scrollRoot.scrollHeight - scrollRoot.scrollTop - scrollRoot.clientHeight <
-    16
-  )
-    active.value = sections.at(-1)!.id;
+let manualTarget: string | null = null;
+let scrollFrame = 0;
+let unlockTimer: ReturnType<typeof setTimeout> | null = null;
+
+function syncNavigation(): void {
+  if (!scrollRoot || manualTarget) return;
+  cancelAnimationFrame(scrollFrame);
+  scrollFrame = requestAnimationFrame(() => {
+    if (!scrollRoot || manualTarget) return;
+    const rootTop = scrollRoot.getBoundingClientRect().top;
+    const marker = rootTop + 96;
+    let current = sections[0].id;
+    for (const section of sections) {
+      const element = document.getElementById(`settings-${section.id}`);
+      if (element && element.getBoundingClientRect().top <= marker)
+        current = section.id;
+    }
+    if (
+      scrollRoot.scrollHeight - scrollRoot.scrollTop - scrollRoot.clientHeight <
+      24
+    )
+      current = sections.at(-1)!.id;
+    active.value = current;
+  });
 }
 
 function save(): void {
@@ -78,9 +140,32 @@ function save(): void {
 }
 function scrollTo(id: string): void {
   active.value = id;
-  document
-    .getElementById(`settings-${id}`)
-    ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  manualTarget = id;
+  if (unlockTimer) clearTimeout(unlockTimer);
+  const element = document.getElementById(`settings-${id}`);
+  if (scrollRoot && element) {
+    const rootTop = scrollRoot.getBoundingClientRect().top;
+    const destination =
+      scrollRoot.scrollTop + element.getBoundingClientRect().top - rootTop - 20;
+    scrollRoot.scrollTo({ top: destination, behavior: "smooth" });
+  }
+  unlockTimer = setTimeout(() => {
+    releaseManualNavigation();
+  }, 900);
+}
+function releaseManualNavigation(): void {
+  if (!manualTarget) return;
+  manualTarget = null;
+  if (unlockTimer) {
+    clearTimeout(unlockTimer);
+    unlockTimer = null;
+  }
+  syncNavigation();
+}
+async function replayOnboarding(): Promise<void> {
+  if (!settings.value) return;
+  settings.value.onboardingCompleted = false;
+  await store.saveNow();
 }
 function setMemoryMode(mode: "system" | "auto" | "manual"): void {
   if (!settings.value) return;
@@ -104,6 +189,19 @@ function detectJava(): void {
   save();
   void store.detectJava();
 }
+async function chooseJavaPath(): Promise<void> {
+  const path = await window.royale.app.pickJava();
+  if (!path || !settings.value) return;
+  settings.value.javaPath = path;
+  javaPathOpen.value = false;
+  detectJava();
+}
+function useAutomaticJava(): void {
+  if (!settings.value) return;
+  settings.value.javaPath = null;
+  javaPathOpen.value = false;
+  detectJava();
+}
 async function installJava(): Promise<void> {
   javaError.value = "";
   try {
@@ -113,42 +211,46 @@ async function installJava(): Promise<void> {
   }
 }
 function chooseLanguage(language: "ru" | "en" | "es"): void {
-  if (!settings.value) return;
+  if (!settings.value || language !== "ru") return;
   settings.value.language = language;
   document.documentElement.lang = language;
   languageOpen.value = false;
   save();
+}
+function chooseNativeLibraries(value: "never" | "old-only" | "always"): void {
+  if (!settings.value) return;
+  settings.value.replaceNativeLibraries = value;
+  nativeLibrariesOpen.value = false;
+  save();
+}
+function closeNativeLibraries(): void {
+  nativeLibrariesOpen.value = false;
+  javaPathOpen.value = false;
 }
 
 onMounted(async () => {
   if (!store.settings) await store.hydrate();
   if (!store.java) void store.detectJava();
   scrollRoot = document.querySelector<HTMLElement>(".content");
-  scrollRoot?.addEventListener("scroll", syncBottomNavigation, {
+  scrollRoot?.addEventListener("scroll", syncNavigation, {
     passive: true,
   });
-  observer = new IntersectionObserver(
-    (entries) => {
-      const visible = entries
-        .filter((entry) => entry.isIntersecting)
-        .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
-      if (visible) active.value = visible.target.id.replace("settings-", "");
-    },
-    {
-      root: scrollRoot,
-      rootMargin: "-10% 0px -45% 0px",
-      threshold: [0, 0.2, 0.5],
-    },
-  );
-  sections.forEach((section) => {
-    const element = document.getElementById(`settings-${section.id}`);
-    if (element) observer?.observe(element);
+  scrollRoot?.addEventListener("scrollend", releaseManualNavigation, {
+    passive: true,
   });
-  void launcher.checkUpdate();
+  syncNavigation();
+  document.addEventListener("click", closeNativeLibraries);
+  void window.royale.app
+    .getVersion()
+    .then((version) => (launcherVersion.value = version));
+  void store.checkLauncherUpdate();
 });
 onBeforeUnmount(() => {
-  observer?.disconnect();
-  scrollRoot?.removeEventListener("scroll", syncBottomNavigation);
+  if (unlockTimer) clearTimeout(unlockTimer);
+  cancelAnimationFrame(scrollFrame);
+  scrollRoot?.removeEventListener("scroll", syncNavigation);
+  scrollRoot?.removeEventListener("scrollend", releaseManualNavigation);
+  document.removeEventListener("click", closeNativeLibraries);
 });
 </script>
 
@@ -214,15 +316,18 @@ onBeforeUnmount(() => {
               autoplay
               muted
               loop
-              preload="metadata"
+              preload="auto"
               :style="{ objectFit: settings.backgroundFit }"
+              @error="store.backgroundFailed()"
             />
-            <i
+            <img
               v-else-if="store.backgroundUrl"
+              :src="store.backgroundUrl"
+              alt=""
               :style="{
-                backgroundImage: `url(${store.backgroundUrl})`,
-                backgroundSize: settings.backgroundFit,
+                objectFit: settings.backgroundFit,
               }"
+              @error="store.backgroundFailed()"
             />
             <Icon v-else name="image" :size="28" />
             <b v-if="store.backgroundUrl">{{
@@ -252,6 +357,9 @@ onBeforeUnmount(() => {
             </button>
           </div>
         </div>
+        <p v-if="store.backgroundError" class="inline-error">
+          <Icon name="alert" :size="14" />{{ store.backgroundError }}
+        </p>
         <div
           v-if="store.backgroundUrl"
           class="setting-card compact fit-setting"
@@ -301,6 +409,26 @@ onBeforeUnmount(() => {
           <span>{{ tr("Изменить", "Change", "Cambiar") }}</span
           ><Icon name="chevron" :size="16" />
         </button>
+        <button
+          class="setting-card compact language-button"
+          @click="replayOnboarding"
+        >
+          <div class="setting-icon"><Icon name="sparkles" :size="18" /></div>
+          <div class="setting-copy">
+            <b>{{
+              tr("Обучение по лаунчеру", "Launcher tour", "Guía del launcher")
+            }}</b>
+            <small>{{
+              tr(
+                "Снова показать знакомство с Vela и основные шаги настройки.",
+                "Show the Vela introduction and setup steps again.",
+                "Vuelve a mostrar la introducción y los pasos de configuración.",
+              )
+            }}</small>
+          </div>
+          <span>{{ tr("Показать", "Open", "Abrir") }}</span>
+          <Icon name="chevron" :size="16" />
+        </button>
       </section>
 
       <section id="settings-global" class="settings-section">
@@ -330,7 +458,7 @@ onBeforeUnmount(() => {
         <div class="setting-card compact">
           <div class="setting-icon"><Icon name="folder" :size="18" /></div>
           <div class="setting-copy">
-            <b>Папка Royale</b
+            <b>Папка Vela</b
             ><small class="path">{{ settings.storagePath }}</small>
           </div>
           <button class="btn" @click="store.pickStorageFolder()">
@@ -433,7 +561,10 @@ onBeforeUnmount(() => {
             @update:model-value="save"
           />
         </div>
-        <div class="setting-card compact">
+        <div
+          class="setting-card compact"
+          :class="{ 'dropdown-active': nativeLibrariesOpen }"
+        >
           <div class="setting-icon"><Icon name="refresh" :size="18" /></div>
           <div class="setting-copy">
             <b>Нативные библиотеки</b
@@ -442,15 +573,43 @@ onBeforeUnmount(() => {
               LWJGL.</small
             >
           </div>
-          <select
-            v-model="settings.replaceNativeLibraries"
-            class="control native-select"
-            @change="save"
+          <div
+            class="native-dropdown"
+            :class="{ open: nativeLibrariesOpen }"
+            @click.stop
           >
-            <option value="never">Не заменять</option>
-            <option value="old-only">По необходимости</option>
-            <option value="always">Каждый запуск</option>
-          </select>
+            <button
+              class="native-trigger"
+              @click="nativeLibrariesOpen = !nativeLibrariesOpen"
+            >
+              <span
+                ><b>{{ nativeLibraryLabel }}</b></span
+              >
+              <Icon name="chevron" :size="15" />
+            </button>
+            <Transition name="native-menu">
+              <div v-if="nativeLibrariesOpen" class="native-menu">
+                <button
+                  v-for="option in nativeLibraryOptions"
+                  :key="option.value"
+                  :class="{
+                    active: settings.replaceNativeLibraries === option.value,
+                  }"
+                  @click="chooseNativeLibraries(option.value)"
+                >
+                  <span
+                    ><b>{{ option.label }}</b
+                    ><small>{{ option.detail }}</small></span
+                  >
+                  <Icon
+                    v-if="settings.replaceNativeLibraries === option.value"
+                    name="check"
+                    :size="15"
+                  />
+                </button>
+              </div>
+            </Transition>
+          </div>
         </div>
       </section>
 
@@ -523,38 +682,68 @@ onBeforeUnmount(() => {
         <p v-if="javaError" class="inline-error">
           <Icon name="alert" :size="14" />{{ javaError }}
         </p>
-        <div class="setting-card column">
-          <label
-            ><b>{{ tr("Путь к Java", "Java path", "Ruta de Java") }}</b
-            ><small>{{
-              tr(
-                "Оставьте пустым для автоматического поиска",
-                "Leave empty for automatic detection",
-                "Déjelo vacío para la detección automática",
-              )
-            }}</small></label
-          ><input
-            v-model="settings.javaPath"
-            class="control wide"
-            placeholder="C:\Program Files\Java\jdk-21\bin\java.exe"
-            @change="detectJava"
-          />
-        </div>
-        <div class="setting-card compact">
-          <div class="setting-icon"><Icon name="download" :size="18" /></div>
+        <div
+          class="setting-card compact"
+          :class="{ 'dropdown-active': javaPathOpen }"
+        >
+          <div class="setting-icon"><Icon name="rocket" :size="18" /></div>
           <div class="setting-copy">
-            <b>Автоматически установить Java {{ GAME.javaMajor }}</b
+            <b>{{ tr("Путь к Java", "Java path", "Ruta de Java") }}</b
             ><small
-              >Переносимый Temurin будет сохранён в .royale/jre/java{{
-                GAME.javaMajor
-              }}
-              без изменения системы.</small
+              >Автопоиск выполняется перед каждым запуском; при желании можно
+              указать свой java.exe.</small
             >
           </div>
-          <UiSwitch
-            v-model="settings.autoInstallJava"
-            @update:model-value="save"
-          />
+          <div
+            class="native-dropdown java-path-dropdown"
+            :class="{ open: javaPathOpen }"
+            @click.stop
+          >
+            <button
+              class="native-trigger java-path-trigger"
+              @click="javaPathOpen = !javaPathOpen"
+            >
+              <span
+                ><b>{{
+                  settings.javaPath ? "Свой java.exe" : "Автоматически"
+                }}</b
+                ><small>{{
+                  settings.javaPath || `Поиск Java ${GAME.javaMajor}+`
+                }}</small></span
+              >
+              <Icon name="chevron" :size="15" />
+            </button>
+            <Transition name="native-menu">
+              <div v-if="javaPathOpen" class="native-menu">
+                <button
+                  :class="{ active: !settings.javaPath }"
+                  @click="useAutomaticJava"
+                >
+                  <span
+                    ><b>Автоматически</b
+                    ><small>Найти и проверить Java перед запуском</small></span
+                  >
+                  <Icon
+                    v-if="!settings.javaPath"
+                    name="check"
+                    :size="15"
+                  />
+                </button>
+                <button
+                  :class="{ active: Boolean(settings.javaPath) }"
+                  @click="chooseJavaPath"
+                >
+                  <span
+                    ><b>Выбрать java.exe</b
+                    ><small>{{
+                      settings.javaPath || "Указать собственную Java"
+                    }}</small></span
+                  >
+                  <Icon name="folder" :size="15" />
+                </button>
+              </div>
+            </Transition>
+          </div>
         </div>
         <div class="setting-card advanced-grid">
           <label
@@ -574,21 +763,30 @@ onBeforeUnmount(() => {
               placeholder="Например: -XX:+UseG1GC"
               @change="save"
           /></label>
+        </div>
+        <div class="setting-card column standalone-field">
           <label
             ><b>Аргументы Minecraft</b
-            ><small>Дополнительные параметры после main class</small
+            ><small
+              >Дополнительные параметры запуска игры после main class. По
+              умолчанию поле остаётся пустым.</small
             ><input
               v-model="settings.minecraftArgs"
               class="control wide"
               placeholder="Например: --width 1280 --height 720"
               @change="save"
           /></label>
+        </div>
+        <div class="setting-card column standalone-field">
           <label
-            ><b>Переменные среды</b><small>Одна строка KEY=value</small
+            ><b>Переменные среды</b
+            ><small
+              >По одной паре KEY=value на строку. Значения применяются только к
+              Minecraft.</small
             ><textarea
               v-model="settings.environmentVariables"
               class="control wide multiline"
-              placeholder="MESA_GL_VERSION_OVERRIDE=4.6"
+              placeholder="Например: MESA_GL_VERSION_OVERRIDE=4.6"
               @change="save"
             />
           </label>
@@ -645,8 +843,11 @@ onBeforeUnmount(() => {
         <div class="setting-card compact">
           <div class="setting-icon"><Icon name="close" :size="18" /></div>
           <div class="setting-copy">
-            <b>Закрывать лаунчер после запуска</b
-            ><small>Освободить память после открытия Minecraft</small>
+            <b>Скрывать лаунчер во время игры</b
+            ><small
+              >Скрыть только после появления окна Minecraft и вернуть после
+              выхода.</small
+            >
           </div>
           <UiSwitch
             v-model="settings.closeOnLaunch"
@@ -664,38 +865,56 @@ onBeforeUnmount(() => {
         <div class="setting-card update-card">
           <div class="setting-icon"><Icon name="rocket" :size="19" /></div>
           <div class="setting-copy">
-            <b>Обновление Royale Master</b
-            ><small v-if="launcher.updateInfo"
-              >{{
-                !launcher.updateInfo.installed
-                  ? "Клиентский мод ещё не установлен"
-                  : launcher.updateInfo.available
-                    ? "Найден новый коммит"
-                    : "Установлена актуальная версия"
-              }}
-              · {{ launcher.updateInfo.remoteCommitSha?.slice(0, 8)
-              }}<template v-if="launcher.updateInfo.commitMessage">
-                · {{ launcher.updateInfo.commitMessage }}</template
-              ></small
-            ><small v-else>Проверяем GitHub…</small>
+            <b>Обновление Vela Launcher</b
+            ><small v-if="store.launcherUpdateError" class="update-error"
+              >Не удалось проверить: {{ store.launcherUpdateError }}</small
+            ><small v-else-if="store.launcherUpdate?.available"
+              >Доступен новый установщик Vela Launcher v{{
+                store.launcherUpdate.latestVersion
+              }}</small
+            ><small v-else
+              >Проверка версии лаунчера выполняется через официальный
+              репозиторий.</small
+            >
           </div>
-          <button class="btn" @click="launcher.checkUpdate()">
-            <Icon name="refresh" :size="15" />Проверить Royale Master
-          </button>
           <button
-            v-if="
-              launcher.updateInfo &&
-              (!launcher.updateInfo.installed || launcher.updateInfo.available)
+            class="btn launcher-update-button"
+            :disabled="
+              store.launcherUpdateChecking || store.launcherUpdateInstalling
             "
-            class="btn btn-primary"
-            @click="launcher.install()"
+            @click="store.installLauncherUpdate()"
           >
-            <Icon name="download" :size="15" />{{
-              launcher.updateInfo.installed
-                ? "Скачать и обновить"
-                : "Установить Royale Master"
-            }}
+            <Icon
+              :name="
+                store.launcherUpdateChecking ||
+                store.launcherUpdateProgress?.phase === 'installing'
+                  ? 'spinner'
+                  : store.launcherUpdateInstalling
+                    ? 'download'
+                    : 'refresh'
+              "
+              :size="15"
+              :class="{
+                spin:
+                  store.launcherUpdateChecking ||
+                  store.launcherUpdateProgress?.phase === 'installing',
+              }"
+            />
+            <span
+              ><small>{{ launcherUpdateVersion }}</small
+              ><b>{{ launcherUpdateAction }}</b></span
+            >
           </button>
+          <i
+            v-if="store.launcherUpdateInstalling"
+            class="launcher-update-progress"
+            :style="{
+              width: `${Math.max(
+                2,
+                store.launcherUpdateProgress?.progress ?? 0,
+              )}%`,
+            }"
+          />
         </div>
       </section>
     </main>
@@ -740,33 +959,19 @@ onBeforeUnmount(() => {
                 name="check"
                 :size="18"
               /></button
-            ><button
-              class="language"
-              :class="{ active: settings?.language === 'en' }"
-              @click="chooseLanguage('en')"
-            >
+            ><button class="language" disabled>
               <span class="flag en" />
               <div><b>English</b><small>English interface</small></div>
-              <Icon
-                v-if="settings?.language === 'en'"
-                name="check"
-                :size="18"
-              /></button
-            ><button
-              class="language"
-              :class="{ active: settings?.language === 'es' }"
-              @click="chooseLanguage('es')"
-            >
+              <em>В разработке</em></button
+            ><button class="language" disabled>
               <span class="flag es" />
               <div><b>Español</b><small>Interfaz en español</small></div>
-              <Icon
-                v-if="settings?.language === 'es'"
-                name="check"
-                :size="18"
-              />
+              <em>В разработке</em>
             </button>
-          </section></div></Transition
-    ></Teleport>
+          </section>
+        </div></Transition
+      ></Teleport
+    >
   </div>
 </template>
 
@@ -823,7 +1028,7 @@ onBeforeUnmount(() => {
   height: 42px;
   border-radius: 11px;
   background: var(--green-soft);
-  border: 1px solid rgba(83, 195, 106, 0.18);
+  border: 1px solid rgba(118, 104, 255, 0.2);
   box-shadow: inset 3px 0 var(--green);
   transition: transform 0.2s var(--ease);
 }
@@ -849,6 +1054,7 @@ onBeforeUnmount(() => {
   gap: 50px;
 }
 .settings-section {
+  position: relative;
   scroll-margin-top: 22px;
 }
 .settings-section > header {
@@ -866,7 +1072,7 @@ onBeforeUnmount(() => {
   border-radius: 11px;
   color: var(--green);
   background: var(--green-soft);
-  border: 1px solid rgba(83, 195, 106, 0.15);
+  border: 1px solid rgba(118, 104, 255, 0.18);
 }
 .settings-section h3 {
   font-size: 19px;
@@ -877,11 +1083,12 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 .setting-card {
+  position: relative;
   width: 100%;
   margin-top: 8px;
   padding: 15px 16px;
   border-radius: 14px;
-  background: rgba(17, 23, 19, 0.9);
+  background: rgba(17, 19, 29, 0.9);
   border: 1px solid var(--hairline);
   backdrop-filter: blur(18px);
   transition:
@@ -890,9 +1097,12 @@ onBeforeUnmount(() => {
     transform 0.25s var(--ease),
     box-shadow 0.25s;
 }
+.setting-card.dropdown-active {
+  z-index: 60;
+}
 .setting-card:hover {
   border-color: var(--hairline-strong);
-  background: rgba(23, 31, 25, 0.96);
+  background: rgba(24, 27, 40, 0.96);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
 }
 .setting-card.compact {
@@ -977,19 +1187,18 @@ label small {
   overflow: hidden;
   border-radius: 11px;
   color: var(--text-3);
-  background: linear-gradient(135deg, var(--surface-3), #0b120d);
+  background: linear-gradient(135deg, var(--surface-3), #0d1020);
   border: 1px solid var(--hairline);
 }
 .media-preview video,
-.media-preview > i {
+.media-preview > img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
-.media-preview > i {
+.media-preview > img {
   display: block;
-  background-size: cover;
-  background-position: center;
+  object-position: center;
 }
 .media-preview > b {
   position: absolute;
@@ -1082,13 +1291,186 @@ label small {
   resize: vertical;
   line-height: 1.4;
 }
-.native-select {
+.native-dropdown {
+  position: relative;
+  z-index: 2;
   width: 190px;
+  flex: none;
+}
+.java-path-dropdown {
+  width: min(330px, 38vw);
+}
+.java-path-trigger {
+  min-height: 48px;
+}
+.java-path-trigger > span {
+  min-width: 0;
+  flex: 1;
+  text-align: left;
+}
+.java-path-trigger b,
+.java-path-trigger small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.java-path-trigger b {
+  font-size: 10.5px;
+}
+.java-path-trigger small {
+  margin-top: 3px;
+  color: var(--text-3);
+  font-size: 8.5px;
+}
+.java-path-dropdown .native-menu {
+  width: 100%;
+}
+.native-trigger {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 11px 0 13px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 10px;
+  color: var(--text-1);
+  background: var(--surface-2);
+}
+.native-trigger svg {
+  color: var(--text-3);
+  transform: rotate(90deg);
+  transition: transform 0.2s var(--ease);
+}
+.native-dropdown.open .native-trigger {
+  border-color: var(--green-line);
+  background: var(--green-soft);
+}
+.native-dropdown.open .native-trigger svg {
+  color: var(--green);
+  transform: rotate(-90deg);
+}
+.native-menu {
+  position: absolute;
+  z-index: 80;
+  top: calc(100% + 7px);
+  right: 0;
+  width: 260px;
+  padding: 6px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 12px;
+  background: rgba(13, 16, 32, 0.98);
+  box-shadow: 0 18px 48px #000a;
+  backdrop-filter: blur(18px);
+}
+.native-menu button {
+  width: 100%;
+  min-height: 50px;
+  padding: 8px 9px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-radius: 8px;
+  text-align: left;
+  color: var(--text-2);
+}
+.native-menu button:hover,
+.native-menu button.active {
+  color: var(--text-0);
+  background: var(--green-soft);
+}
+.native-menu button > span {
+  min-width: 0;
+}
+.native-menu b,
+.native-menu small {
+  display: block;
+}
+.native-menu b {
+  font-size: 10px;
+}
+.native-menu small {
+  margin-top: 3px;
+  color: var(--text-3);
+  font-size: 8px;
+}
+.native-menu svg {
+  flex: none;
+  color: var(--green);
+}
+.native-menu-enter-active,
+.native-menu-leave-active {
+  transition:
+    opacity 0.16s ease,
+    transform 0.18s var(--ease);
+  transform-origin: top right;
+}
+.native-menu-enter-from,
+.native-menu-leave-to {
+  opacity: 0;
+  transform: translateY(-5px) scale(0.97);
 }
 .update-card {
+  position: relative;
+  overflow: hidden;
   display: flex;
   align-items: center;
   gap: 10px;
+}
+.launcher-update-progress {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  border-radius: 0 4px 4px 0;
+  background: var(--green);
+  box-shadow: 0 0 12px rgba(118, 104, 255, 0.52);
+  transition: width 0.18s linear;
+}
+.launcher-update-button:disabled {
+  cursor: wait;
+  opacity: 0.78;
+}
+.launcher-update-button {
+  min-width: 154px;
+  min-height: 43px;
+  padding: 6px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 9px;
+  border-color: var(--green-line);
+  background: var(--green-soft);
+}
+.launcher-update-button > span {
+  min-width: 0;
+  display: block;
+  text-align: left;
+}
+.launcher-update-button small,
+.launcher-update-button b {
+  display: block;
+  white-space: nowrap;
+}
+.launcher-update-button small {
+  color: var(--text-3);
+  font: 8px var(--font-num);
+}
+.launcher-update-button b {
+  margin-top: 2px;
+  color: var(--green);
+  font-size: 10px;
+}
+.launcher-update-button:hover {
+  transform: translateY(-1px);
+  border-color: var(--green);
+  background: rgba(118, 104, 255, 0.16);
+}
+.setting-copy small.update-error {
+  color: var(--danger);
 }
 .spin {
   animation: spin 0.75s linear infinite;
@@ -1195,7 +1577,7 @@ label small {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, #79817b, #d6a535, #57c66e);
+  background: linear-gradient(90deg, #79819a, #7668ff, #43c7f4);
   transition: width 0.45s var(--ease);
 }
 .manual-memory {
@@ -1257,7 +1639,7 @@ label small {
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  background: rgba(2, 5, 3, 0.68);
+  background: rgba(7, 8, 17, 0.68);
   backdrop-filter: blur(8px);
 }
 .language-sheet {
@@ -1266,7 +1648,7 @@ label small {
   margin-bottom: 16px;
   padding: 18px;
   border-radius: 20px;
-  background: #151b17;
+  background: #171b28;
   border: 1px solid var(--hairline-strong);
   box-shadow: 0 30px 100px #000b;
 }

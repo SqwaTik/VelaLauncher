@@ -58,7 +58,7 @@ const dontAsk = ref(false);
   width: min(410px, 100%);
   padding: 24px;
   border-radius: 18px;
-  background: #151b17;
+  background: #171b28;
   border: 1px solid var(--hairline-strong);
   box-shadow: 0 28px 100px #000c;
   text-align: center;
@@ -108,7 +108,7 @@ label {
   border: 1px solid var(--hairline-strong);
 }
 .checkbox.checked {
-  color: #07130a;
+  color: #f7f5ff;
   background: var(--green);
   border-color: var(--green);
 }

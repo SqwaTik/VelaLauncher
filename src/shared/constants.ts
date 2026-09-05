@@ -5,31 +5,13 @@
 
 export const BRAND = {
   name: "VELA",
-  fullName: "Vela Launcher",
-  tagline: "Королевский клиент для Minecraft",
+  fullName: "Vela",
+  tagline: "Клиент для Minecraft",
   repo: "https://github.com/SqwaTik/Royale-Master",
 } as const;
 
-/**
- * Azure AD application (client) ID used for Microsoft/Xbox login.
- *
- * Replace the placeholder with your own Azure app registration client ID.
- * The app must be registered as a "public client" with these device-code
- * requirements enabled and the "XboxLive.signin offline_access" scopes.
- * Until a real ID is provided, MS login will fail with an honest error.
- */
-export const MS_CLIENT_ID = "";
-
 /** Public Discord application ID. Rich Presence never needs a client secret. */
 export const DISCORD_APP_ID = "1144713648120549536";
-
-/** Microsoft OAuth 2.0 endpoints for native browser auth with PKCE. */
-export const MS_OAUTH = {
-  authorize:
-    "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize",
-  token: "https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
-  scope: "XboxLive.signin offline_access",
-} as const;
 
 /** Target game + loader versions the launcher installs. */
 export const GAME = {
@@ -37,7 +19,7 @@ export const GAME = {
   minecraftVersion: "1.21.11",
   yarnMappings: "1.21.11+build.4",
   fabricLoader: "0.18.4",
-  fabricApi: "0.141.2+1.21.11",
+  fabricApi: "0.141.5+1.21.11",
   javaMajor: 21,
   /** Royale client mod version. */
   clientVersion: "1.0.13",
@@ -51,9 +33,13 @@ export const IPC = {
   windowClose: "window:close",
   windowIsMaximized: "window:is-maximized",
   appGetVersion: "app:get-version",
+  appCheckUpdate: "app:check-update",
+  appInstallUpdate: "app:install-update",
+  appUpdateProgress: "app:update-progress",
   openExternal: "app:open-external",
   pickFolder: "app:pick-folder",
   pickImage: "app:pick-image",
+  pickJava: "app:pick-java",
   pickMedia: "app:pick-media",
   pickGallery: "app:pick-gallery",
   readImage: "app:read-image",
@@ -65,6 +51,9 @@ export const IPC = {
   stateGet: "state:get",
   settingsSave: "settings:save",
   accountsSave: "accounts:save",
+  instancesSave: "instances:save",
+  instanceReveal: "instance:reveal",
+  instanceDuplicate: "instance:duplicate",
   friendsSave: "friends:save",
   friendResolve: "friends:resolve",
 
@@ -73,11 +62,6 @@ export const IPC = {
   javaInstall: "java:install",
   javaProgress: "java:progress",
 
-  // microsoft auth
-  authMsStart: "auth:ms-start", // open system browser and start OAuth code + PKCE flow
-  authMsCancel: "auth:ms-cancel", // abort an in-flight flow
-  authMsRefresh: "auth:ms-refresh", // refresh a stored MS account's token
-  authMsStatus: "auth:ms-status", // main -> renderer (event): polling progress
   authElyLogin: "auth:ely-login",
   authElyRefresh: "auth:ely-refresh",
   authLittleSkinLogin: "auth:littleskin-login",
@@ -87,6 +71,7 @@ export const IPC = {
   // skin / cape profile
   appearanceGet: "appearance:get",
   appearancePickSkin: "appearance:pick-skin",
+  appearancePickCape: "appearance:pick-cape",
   appearanceExportSkin: "appearance:export-skin",
   appearanceUploadSkin: "appearance:upload-skin",
   appearanceResetSkin: "appearance:reset-skin",
@@ -100,6 +85,7 @@ export const IPC = {
   gameCancel: "game:cancel",
   gameCheckUpdate: "game:check-update",
   gameLaunch: "game:launch",
+  gameCancelLaunch: "game:cancel-launch",
   gameProgress: "game:progress", // main -> renderer (event)
   gameLaunchStatus: "game:launch-status", // main -> renderer (event)
 
@@ -112,7 +98,32 @@ export const IPC = {
   modInstalledList: "mod:installed-list",
   modToggle: "mod:toggle",
   modRemove: "mod:remove",
+  modReveal: "mod:reveal",
   modProgress: "mod:progress", // main -> renderer (event)
+
+  // modrinth / resource packs
+  resourceSearch: "resource:search",
+  resourceProject: "resource:project",
+  resourceInstallProject: "resource:install-project",
+  resourceInstalledList: "resource:installed-list",
+  resourceRemove: "resource:remove",
+  resourceReveal: "resource:reveal",
+  resourceProgress: "resource:progress",
+
+  // modrinth / shader packs
+  shaderSearch: "shader:search",
+  shaderProject: "shader:project",
+  shaderInstallProject: "shader:install-project",
+  shaderInstalledList: "shader:installed-list",
+  shaderRemove: "shader:remove",
+  shaderReveal: "shader:reveal",
+  shaderProgress: "shader:progress",
+
+  // modpack import / export and OS file-open integration
+  modpackImport: "modpack:import",
+  modpackExport: "modpack:export",
+  modpackProgress: "modpack:progress",
+  modpackOpen: "modpack:open",
 } as const;
 
 export const MODRINTH_API = "https://api.modrinth.com/v2";

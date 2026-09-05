@@ -5,11 +5,13 @@ import type {
   GameContentSummary,
   InstallProgress,
   JavaInfo,
+  LauncherUpdateInfo,
+  LauncherUpdateProgress,
   SystemMemoryInfo,
 } from "@shared/types";
 
 function mediaUrl(path: string): string {
-  return `royale-media://local/${encodeURIComponent(path)}`;
+  return `royale-media://local/media?path=${encodeURIComponent(path)}`;
 }
 
 function mediaKind(path: string | null | undefined): "image" | "video" {
@@ -24,6 +26,12 @@ export const useSettingsStore = defineStore("settings", () => {
   const detectingJava = ref(false);
   const installingJava = ref(false);
   const javaInstallProgress = ref<InstallProgress | null>(null);
+  const launcherUpdate = ref<LauncherUpdateInfo | null>(null);
+  const launcherUpdateChecking = ref(false);
+  const launcherUpdateError = ref("");
+  const launcherUpdateProgress = ref<LauncherUpdateProgress | null>(null);
+  const launcherUpdateInstalling = ref(false);
+  const backgroundError = ref("");
   const screenshotPaths = ref<string[]>([]);
   const content = ref<GameContentSummary>({
     mods: 0,
@@ -31,6 +39,7 @@ export const useSettingsStore = defineStore("settings", () => {
     shaderPacks: 0,
     worlds: 0,
     screenshots: 0,
+    worldItems: [],
   });
 
   const backgroundUrl = computed(() => {
@@ -56,16 +65,17 @@ export const useSettingsStore = defineStore("settings", () => {
   );
 
   async function hydrate(): Promise<void> {
-    const [state, memory, screenshots, summary] = await Promise.all([
-      window.royale.state.get(),
+    const state = await window.royale.state.get();
+    settings.value = state.settings;
+    const [memory, screenshots, summary] = await Promise.allSettled([
       window.royale.app.systemMemory(),
       window.royale.app.screenshots(),
       window.royale.app.contentSummary(),
     ]);
-    settings.value = state.settings;
-    systemMemory.value = memory;
-    screenshotPaths.value = screenshots;
-    content.value = summary;
+    if (memory.status === "fulfilled") systemMemory.value = memory.value;
+    if (screenshots.status === "fulfilled")
+      screenshotPaths.value = screenshots.value;
+    if (summary.status === "fulfilled") content.value = summary.value;
   }
 
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -117,12 +127,13 @@ export const useSettingsStore = defineStore("settings", () => {
   }
 
   async function refreshGameContent(): Promise<void> {
-    const [screenshots, summary] = await Promise.all([
+    const [screenshots, summary] = await Promise.allSettled([
       window.royale.app.screenshots(),
       window.royale.app.contentSummary(),
     ]);
-    screenshotPaths.value = screenshots;
-    content.value = summary;
+    if (screenshots.status === "fulfilled")
+      screenshotPaths.value = screenshots.value;
+    if (summary.status === "fulfilled") content.value = summary.value;
   }
 
   async function pickStorageFolder(): Promise<void> {
@@ -136,29 +147,118 @@ export const useSettingsStore = defineStore("settings", () => {
   async function pickBackground(): Promise<void> {
     const path = await window.royale.app.pickMedia();
     if (!path || !settings.value) return;
-    settings.value.backgroundMediaPath = path;
-    settings.value.backgroundImagePath = null;
-    await saveNow();
+    backgroundError.value = "";
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    // Persist first. The custom media protocol only serves paths already
+    // whitelisted in the main-process state; changing the reactive value
+    // before IPC completed caused the first request to receive 403 forever.
+    const next: AppSettings = {
+      ...snapshot()!,
+      backgroundMediaPath: path,
+      backgroundImagePath: null,
+    };
+    const persisted = await window.royale.state.saveSettings(next);
+    settings.value = persisted.settings;
   }
 
   async function pickGallery(): Promise<void> {
     const paths = await window.royale.app.pickGallery();
     if (!paths.length || !settings.value) return;
-    settings.value.galleryImagePaths = [...new Set(paths)].slice(0, 12);
-    await saveNow();
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    const next: AppSettings = {
+      ...snapshot()!,
+      galleryImagePaths: [...new Set(paths)].slice(0, 12),
+    };
+    const persisted = await window.royale.state.saveSettings(next);
+    settings.value = persisted.settings;
   }
 
   async function clearBackground(): Promise<void> {
     if (!settings.value) return;
     settings.value.backgroundMediaPath = null;
     settings.value.backgroundImagePath = null;
+    backgroundError.value = "";
     await saveNow();
+  }
+
+  function backgroundFailed(): void {
+    backgroundError.value =
+      "Не удалось открыть этот файл. Проверьте, что он не перемещён и использует поддерживаемый кодек.";
   }
 
   async function clearGallery(): Promise<void> {
     if (!settings.value) return;
     settings.value.galleryImagePaths = [];
     await saveNow();
+  }
+
+  async function checkLauncherUpdate(): Promise<void> {
+    if (launcherUpdateChecking.value) return;
+    launcherUpdateChecking.value = true;
+    launcherUpdateError.value = "";
+    try {
+      launcherUpdate.value = await window.royale.app.checkUpdate();
+    } catch (cause) {
+      const raw = cause instanceof Error ? cause.message : String(cause);
+      launcherUpdateError.value =
+        raw
+          .replace(/^Error invoking remote method '[^']+':\s*/i, "")
+          .replace(/^Error:\s*/i, "")
+          .trim()
+          .slice(0, 180) || "Сервис обновлений временно недоступен.";
+    } finally {
+      launcherUpdateChecking.value = false;
+    }
+  }
+
+  let updateSubscribed = false;
+  function subscribeLauncherUpdate(): void {
+    if (updateSubscribed) return;
+    updateSubscribed = true;
+    window.royale.app.onUpdateProgress((progress) => {
+      launcherUpdateProgress.value = progress;
+      launcherUpdateInstalling.value =
+        progress.phase === "downloading" || progress.phase === "installing";
+      if (progress.phase === "error")
+        launcherUpdateError.value = progress.message;
+    });
+  }
+
+  async function installLauncherUpdate(): Promise<void> {
+    const update = launcherUpdate.value;
+    if (!update?.available) {
+      await checkLauncherUpdate();
+      return;
+    }
+    if (launcherUpdateInstalling.value) return;
+    subscribeLauncherUpdate();
+    launcherUpdateError.value = "";
+    launcherUpdateProgress.value = {
+      phase: "downloading",
+      progress: 0,
+      downloadedBytes: 0,
+      totalBytes: 0,
+      message: "Подготавливаем обновление",
+    };
+    launcherUpdateInstalling.value = true;
+    try {
+      await window.royale.app.installUpdate();
+    } catch (cause) {
+      const raw = cause instanceof Error ? cause.message : String(cause);
+      launcherUpdateError.value =
+        raw
+          .replace(/^Error invoking remote method '[^']+':\s*/i, "")
+          .replace(/^Error:\s*/i, "")
+          .trim()
+          .slice(0, 220) || "Не удалось установить обновление.";
+      launcherUpdateInstalling.value = false;
+    }
   }
 
   return {
@@ -173,6 +273,12 @@ export const useSettingsStore = defineStore("settings", () => {
     content,
     installingJava,
     javaInstallProgress,
+    launcherUpdate,
+    launcherUpdateChecking,
+    launcherUpdateError,
+    launcherUpdateProgress,
+    launcherUpdateInstalling,
+    backgroundError,
     hydrate,
     save,
     saveNow,
@@ -183,6 +289,9 @@ export const useSettingsStore = defineStore("settings", () => {
     pickBackground,
     pickGallery,
     clearBackground,
+    backgroundFailed,
     clearGallery,
+    checkLauncherUpdate,
+    installLauncherUpdate,
   };
 });

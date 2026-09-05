@@ -22,9 +22,39 @@ function followLink(event: MouseEvent): void {
   event.preventDefault();
   void window.royale.app.openExternal(target.href);
 }
+
+function handleImageError(event: Event): void {
+  const image = event.target;
+  if (!(image instanceof HTMLImageElement)) return;
+  const link = image.closest("a");
+  if (!link) {
+    image.remove();
+    return;
+  }
+
+  const label =
+    image.alt.trim() ||
+    (() => {
+      try {
+        return new URL(link.href).hostname.replace(/^www\./, "");
+      } catch {
+        return "Открыть изображение";
+      }
+    })();
+  image.remove();
+  link.classList.add("image-fallback");
+  if (!link.textContent?.trim()) link.textContent = label;
+}
 </script>
 
-<template><div class="markdown" v-html="html" @click="followLink" /></template>
+<template>
+  <div
+    class="markdown"
+    v-html="html"
+    @click="followLink"
+    @error.capture="handleImageError"
+  />
+</template>
 
 <style scoped lang="scss">
 .markdown {
@@ -75,24 +105,61 @@ function followLink(event: MouseEvent): void {
 .markdown :deep(img) {
   display: block;
   max-width: 100%;
-  max-height: 460px;
+  max-height: 360px;
   margin: 12px auto;
   border-radius: 11px;
   object-fit: contain;
-  background: #080d0a;
+  background: #0b0d17;
+}
+.markdown :deep(p:has(> a > img)) {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 8px 0;
+  line-height: 1;
+}
+.markdown :deep(a:has(> img)) {
+  display: inline-flex;
+  max-width: 100%;
+  border-radius: 7px;
+  text-decoration: none;
+  overflow: hidden;
+}
+.markdown :deep(a > img) {
+  display: inline-block;
+  width: auto;
+  max-width: min(100%, 300px);
+  height: auto;
+  max-height: 44px;
+  margin: 0;
+  border-radius: 6px;
+  background: transparent;
+}
+.markdown :deep(a.image-fallback) {
+  min-height: 27px;
+  padding: 0 9px;
+  align-items: center;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 7px;
+  color: var(--green-bright);
+  background: var(--surface-2);
+  font-size: 9px;
+  line-height: 25px;
+  text-decoration: none;
 }
 .markdown :deep(code) {
   padding: 2px 5px;
   border-radius: 5px;
-  color: #b9efc5;
-  background: #080d0a;
+  color: #b9eaff;
+  background: #0b0d17;
   font: 10px var(--font-num);
 }
 .markdown :deep(pre) {
   padding: 12px;
   overflow: auto;
   border-radius: 9px;
-  background: #080d0a;
+  background: #0b0d17;
 }
 .markdown :deep(pre code) {
   padding: 0;

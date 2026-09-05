@@ -10,11 +10,13 @@ import { useAccountStore } from "./stores/account";
 import { useSettingsStore } from "./stores/settings";
 import { useLauncherStore } from "./stores/launcher";
 import { useModsStore } from "./stores/mods";
+import { useInstancesStore } from "./stores/instances";
 
 const account = useAccountStore();
 const settings = useSettingsStore();
 const launcher = useLauncherStore();
 const mods = useModsStore();
+const instances = useInstancesStore();
 const router = useRouter();
 
 const ready = ref(false);
@@ -24,6 +26,15 @@ const showOnboarding = computed(
 const navigating = ref(false);
 let navigationTimer: ReturnType<typeof setTimeout> | null = null;
 let navigationDoneTimer: ReturnType<typeof setTimeout> | null = null;
+let removeOpenModpackListener: (() => void) | null = null;
+
+async function refreshActiveInstance(): Promise<void> {
+  await launcher.hydrate();
+  await Promise.allSettled([
+    mods.loadInstalled(),
+    settings.refreshGameContent(),
+  ]);
+}
 
 const removeBeforeGuard = router.beforeEach((to, from) => {
   if (to.fullPath === from.fullPath) return;
@@ -42,21 +53,35 @@ const removeAfterGuard = router.afterEach((to) => {
   const activity =
     to.name === "mods"
       ? "Просматривает моды"
-      : to.name === "account"
-        ? "Настраивает профиль"
-        : to.name === "settings"
-          ? "Настраивает лаунчер"
-          : "В главном меню";
+      : to.name === "resources"
+        ? "Выбирает ресурспаки"
+        : to.name === "shaders"
+          ? "Выбирает шейдеры"
+        : to.name === "account"
+          ? "Настраивает профиль"
+          : to.name === "settings"
+            ? "Настраивает лаунчер"
+            : "В главном меню";
   void window.royale.discord.activity(activity);
 });
 // Load persisted state and wire up IPC event subscriptions once, at startup.
 // The BootScreen stays up until the essential state has hydrated.
 onMounted(async () => {
   try {
-    await Promise.all([account.hydrate(), settings.hydrate()]);
+    await Promise.all([
+      account.hydrate(),
+      settings.hydrate(),
+      instances.hydrate(),
+    ]);
     await launcher.hydrate();
     mods.subscribe();
+    removeOpenModpackListener = window.royale.modpacks.onOpen((path) => {
+      void router.push({ path: "/mods", query: { tab: "installed" } });
+      void mods.importPack(path);
+    });
     void settings.detectJava();
+    void settings.checkLauncherUpdate();
+    window.addEventListener("royale:instance-changed", refreshActiveInstance);
   } finally {
     ready.value = true;
   }
@@ -66,6 +91,8 @@ onBeforeUnmount(() => {
   removeAfterGuard();
   if (navigationTimer) clearTimeout(navigationTimer);
   if (navigationDoneTimer) clearTimeout(navigationDoneTimer);
+  removeOpenModpackListener?.();
+  window.removeEventListener("royale:instance-changed", refreshActiveInstance);
 });
 </script>
 
@@ -83,16 +110,19 @@ onBeforeUnmount(() => {
         muted
         loop
         playsinline
-        preload="metadata"
+        preload="auto"
         :style="{ objectFit: settings.settings?.backgroundFit || 'cover' }"
+        @error="settings.backgroundFailed()"
       />
-      <div
+      <img
         v-else-if="settings.backgroundUrl"
         class="background-image"
+        :src="settings.backgroundUrl"
+        alt=""
         :style="{
-          backgroundImage: `url(${settings.backgroundUrl})`,
-          backgroundSize: settings.settings?.backgroundFit || 'cover',
+          objectFit: settings.settings?.backgroundFit || 'cover',
         }"
+        @error="settings.backgroundFailed()"
       />
       <div v-else class="ambient-backdrop"><i /><i /><i /></div>
     </div>
@@ -131,7 +161,7 @@ onBeforeUnmount(() => {
   z-index: 0;
   overflow: hidden;
   pointer-events: none;
-  background: #07100b;
+  background: #090a12;
 }
 .app-shell > :not(.background-media) {
   position: relative;
@@ -145,11 +175,11 @@ onBeforeUnmount(() => {
   background-image:
     linear-gradient(
       90deg,
-      rgba(5, 10, 7, 0.89),
-      rgba(5, 10, 7, 0.46) 52%,
-      rgba(5, 10, 7, 0.76)
+      rgba(9, 10, 18, 0.89),
+      rgba(9, 10, 18, 0.46) 52%,
+      rgba(9, 10, 18, 0.76)
     ),
-    linear-gradient(180deg, rgba(3, 7, 5, 0.1), rgba(3, 7, 5, 0.56));
+    linear-gradient(180deg, rgba(7, 8, 17, 0.1), rgba(7, 8, 17, 0.56));
 }
 .background-media video,
 .background-image {
@@ -159,8 +189,8 @@ onBeforeUnmount(() => {
   animation: media-in 0.24s var(--ease) both;
 }
 .background-image {
-  background-position: center;
-  background-repeat: no-repeat;
+  display: block;
+  object-position: center;
 }
 .ambient-backdrop {
   position: absolute;
@@ -168,15 +198,15 @@ onBeforeUnmount(() => {
   background:
     radial-gradient(
       720px 520px at 76% 18%,
-      rgba(63, 191, 96, 0.24),
+      rgba(118, 104, 255, 0.24),
       transparent 66%
     ),
     radial-gradient(
       520px 420px at 52% 92%,
-      rgba(60, 111, 76, 0.2),
+      rgba(67, 199, 244, 0.18),
       transparent 68%
     ),
-    linear-gradient(140deg, #07100b, #0e1b12 55%, #07100b);
+    linear-gradient(140deg, #090a12, #111624 55%, #090a12);
 }
 .ambient-backdrop::before {
   content: "";
@@ -186,17 +216,17 @@ onBeforeUnmount(() => {
   background-image:
     linear-gradient(
       30deg,
-      rgba(108, 222, 132, 0.11) 12%,
+      rgba(118, 104, 255, 0.11) 12%,
       transparent 12.5%,
       transparent 87%,
-      rgba(108, 222, 132, 0.11) 87.5%
+      rgba(118, 104, 255, 0.11) 87.5%
     ),
     linear-gradient(
       150deg,
-      rgba(108, 222, 132, 0.11) 12%,
+      rgba(67, 199, 244, 0.09) 12%,
       transparent 12.5%,
       transparent 87%,
-      rgba(108, 222, 132, 0.11) 87.5%
+      rgba(67, 199, 244, 0.09) 87.5%
     );
   background-size: 90px 156px;
   mask-image: linear-gradient(90deg, transparent 18%, #000);
@@ -259,7 +289,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: 11px;
   color: var(--text-2);
-  background: rgba(5, 10, 7, 0.62);
+  background: rgba(9, 10, 18, 0.62);
   backdrop-filter: blur(3px);
 }
 .route-loading > span {

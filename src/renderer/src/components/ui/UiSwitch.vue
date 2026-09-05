@@ -85,7 +85,7 @@ defineProps<{ disabled?: boolean }>();
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  background: #f4f7f5;
+  background: #f5f4ff;
   box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4);
   transition:
     transform 0.17s cubic-bezier(0.2, 0.9, 0.35, 1.15),

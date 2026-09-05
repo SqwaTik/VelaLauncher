@@ -7,7 +7,6 @@
 import { computed } from "vue";
 import {
   House,
-  Boxes,
   Settings,
   Play,
   Pause,
@@ -19,7 +18,6 @@ import {
   User,
   Users,
   Plus,
-  Grid2x2 as MicrosoftGrid,
   Paintbrush,
   Globe,
   Folder,
@@ -82,6 +80,13 @@ import {
   SquareMousePointer,
   ZoomIn,
   ZoomOut,
+  Puzzle,
+  Octagon,
+  ArrowDownToLine,
+  Share2,
+  Pin,
+  PinOff,
+  MoreVertical,
 } from "lucide-vue-next";
 import type { FunctionalComponent } from "vue";
 
@@ -94,11 +99,12 @@ const props = withDefaults(
 
 const map: Record<string, IconComp> = {
   home: House,
-  mods: Boxes,
+  mods: Puzzle,
   cube: Box,
   settings: Settings,
   play: Play,
   pause: Pause,
+  stop: Octagon,
   download: Download,
   clock: Clock,
   calendar: Calendar,
@@ -106,7 +112,6 @@ const map: Record<string, IconComp> = {
   user: User,
   users: Users,
   plus: Plus,
-  microsoft: MicrosoftGrid,
   brush: Paintbrush,
   globe: Globe,
   folder: Folder,
@@ -170,6 +175,11 @@ const map: Record<string, IconComp> = {
   select: SquareMousePointer,
   zoomIn: ZoomIn,
   zoomOut: ZoomOut,
+  import: ArrowDownToLine,
+  share: Share2,
+  pin: Pin,
+  pinOff: PinOff,
+  more: MoreVertical,
 };
 
 const comp = computed<IconComp>(

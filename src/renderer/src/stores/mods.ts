@@ -1,6 +1,21 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
-import type { ModProject, InstalledMod } from "@shared/types";
+import type {
+  ModProject,
+  InstalledMod,
+  ModpackProgress,
+} from "@shared/types";
+import { useInstancesStore } from "./instances";
+
+function cleanError(error: unknown): string {
+  const value = (error instanceof Error ? error.message : String(error))
+    .replace(/^Error invoking remote method '[^']+':\s*/i, "")
+    .replace(/^Error:\s*/i, "")
+    .trim();
+  if (!value || /^aggregate\s*error$/i.test(value))
+    return "Не удалось подключиться к Modrinth. Проверьте интернет и повторите попытку.";
+  return value.length > 260 ? `${value.slice(0, 257)}…` : value;
+}
 
 /** Modrinth browse + install state, all backed by the main-process service. */
 export const useModsStore = defineStore("mods", () => {
@@ -10,6 +25,8 @@ export const useModsStore = defineStore("mods", () => {
   const loading = ref(false);
   const error = ref("");
   const notice = ref("");
+  const packBusy = ref(false);
+  const packProgress = ref<ModpackProgress | null>(null);
 
   const installed = ref<InstalledMod[]>([]);
   const detailsCache = ref<Record<string, ModProject>>({});
@@ -32,6 +49,10 @@ export const useModsStore = defineStore("mods", () => {
         };
       }
     });
+    window.royale.modpacks.onProgress((progress) => {
+      packProgress.value = progress;
+      if (progress.phase === "done") packBusy.value = false;
+    });
   }
 
   async function search(
@@ -49,7 +70,7 @@ export const useModsStore = defineStore("mods", () => {
       totalHits.value = res.total_hits;
       offset.value = res.offset;
     } catch (e) {
-      error.value = e instanceof Error ? e.message : String(e);
+      error.value = cleanError(e);
     } finally {
       loading.value = false;
     }
@@ -91,18 +112,16 @@ export const useModsStore = defineStore("mods", () => {
     error.value = "";
     notice.value = "";
     try {
-      const result = await window.royale.mods.installProject(
+      await window.royale.mods.installProject(
         project.project_id,
         project.title,
       );
       await loadInstalled();
-      notice.value = result.dependencyTitles.length
-        ? `Установлено: ${project.title}. Добавлены зависимости: ${result.dependencyTitles.join(", ")}.`
-        : `Установлено: ${project.title}.`;
+      // The card state updates immediately after refresh; a second success
+      // banner only repeats the same information and shifts the catalogue.
+      notice.value = "";
     } catch (e) {
-      error.value = (e instanceof Error ? e.message : String(e))
-        .replace(/^Error invoking remote method '[^']+':\s*/i, "")
-        .replace(/^Error:\s*/i, "");
+      error.value = cleanError(e);
     } finally {
       const s = new Set(busy.value);
       s.delete(project.project_id);
@@ -137,6 +156,51 @@ export const useModsStore = defineStore("mods", () => {
     await loadInstalled();
   }
 
+  async function importPack(path?: string): Promise<void> {
+    if (packBusy.value) return;
+    packBusy.value = true;
+    packProgress.value = {
+      phase: "reading",
+      progress: 0,
+      message: "Читаем сборку",
+    };
+    error.value = "";
+    notice.value = "";
+    try {
+      const result = await window.royale.modpacks.import(path);
+      if (!result) return;
+      await useInstancesStore().hydrate();
+      window.dispatchEvent(new CustomEvent("royale:instance-changed"));
+      await loadInstalled();
+      notice.value = `Сборка «${result.name}» импортирована`;
+    } catch (reason) {
+      error.value = cleanError(reason);
+    } finally {
+      packBusy.value = false;
+    }
+  }
+
+  async function exportPack(): Promise<void> {
+    if (packBusy.value) return;
+    packBusy.value = true;
+    packProgress.value = {
+      phase: "packing",
+      progress: 0,
+      message: "Собираем архив",
+    };
+    error.value = "";
+    notice.value = "";
+    try {
+      const result = await window.royale.modpacks.export();
+      if (!result) return;
+      notice.value = `Сборка сохранена: ${result.path}`;
+    } catch (reason) {
+      error.value = cleanError(reason);
+    } finally {
+      packBusy.value = false;
+    }
+  }
+
   return {
     results,
     totalHits,
@@ -144,6 +208,8 @@ export const useModsStore = defineStore("mods", () => {
     loading,
     error,
     notice,
+    packBusy,
+    packProgress,
     installed,
     detailsCache,
     installProgress,
@@ -158,5 +224,7 @@ export const useModsStore = defineStore("mods", () => {
     toggleMany,
     remove,
     removeMany,
+    importPack,
+    exportPack,
   };
 });

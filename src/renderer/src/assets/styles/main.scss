@@ -1,41 +1,70 @@
+@font-face {
+  font-family: "Roboto";
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url("../fonts/roboto-light.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Roboto";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../fonts/roboto-regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Roboto";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("../fonts/roboto-medium.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Roboto";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("../fonts/roboto-bold.woff2") format("woff2");
+}
+
 /* ============================================================
-   Royale Launcher — "Clean Material" design system
-   XMCL-inspired: opaque engineered surfaces, one strong green
-   action accent, amethyst as the secondary/mod accent, crisp
+   Vela Launcher — "Clean Material" design system
+   XMCL-inspired: opaque engineered surfaces, a violet-blue
+   action accent, cyan as the secondary/mod accent, crisp
    material elevation. Functional, calm, modern.
    ============================================================ */
 
 :root {
   /* --- surfaces: opaque, layered by elevation --- */
-  --surface-0: #090d0b; /* app backdrop */
-  --surface-1: #111614; /* base panels */
-  --surface-2: #181e1b; /* cards */
-  --surface-3: #222a25; /* raised cards / inputs */
-  --surface-4: #2d3731; /* hover / active */
+  --surface-0: #090a12; /* app backdrop */
+  --surface-1: #11131d; /* base panels */
+  --surface-2: #181b28; /* cards */
+  --surface-3: #212638; /* raised cards / inputs */
+  --surface-4: #2b3148; /* hover / active */
   --hairline: rgba(255, 255, 255, 0.08);
   --hairline-strong: rgba(255, 255, 255, 0.15);
 
   /* --- text --- */
-  --text-0: #f2f6f3;
-  --text-1: #c2cbc5;
-  --text-2: #89958d;
-  --text-3: #626d65;
+  --text-0: #f5f4ff;
+  --text-1: #cbcbe0;
+  --text-2: #9698b2;
+  --text-3: #696d8a;
 
-  /* --- primary accent: Minecraft grass green (the action colour) --- */
-  --green: #59d477;
-  --green-bright: #7ce193;
-  --green-deep: #35a953;
-  --green-soft: rgba(89, 212, 119, 0.13);
-  --green-line: rgba(89, 212, 119, 0.42);
-  --green-grad: linear-gradient(135deg, #42b75f 0%, #5bd478 55%, #7ee194 100%);
+  /* --- primary accent: Vela violet with a cool cyan edge --- */
+  --green: #7668ff;
+  --green-bright: #9288ff;
+  --green-deep: #5749dc;
+  --green-soft: rgba(118, 104, 255, 0.15);
+  --green-line: rgba(118, 104, 255, 0.45);
+  --green-grad: linear-gradient(135deg, #6255ea 0%, #7668ff 56%, #43c7f4 100%);
 
-  /* --- secondary accent: amethyst (mods / links) --- */
-  --amethyst: #9a7cff;
-  --amethyst-soft: rgba(154, 124, 255, 0.13);
-  --amethyst-line: rgba(154, 124, 255, 0.42);
+  /* --- secondary accent: cyan (mods / links) --- */
+  --amethyst: #43c7f4;
+  --amethyst-soft: rgba(67, 199, 244, 0.13);
+  --amethyst-line: rgba(67, 199, 244, 0.38);
 
   /* --- status --- */
-  --ok: #56c568;
+  --ok: #43c7f4;
   --warn: #e8c874;
   --danger: #ff5d6c;
   --info: #4ea8ff;
@@ -52,17 +81,16 @@
   --elev-1: 0 2px 8px rgba(0, 0, 0, 0.45);
   --elev-2: 0 6px 20px rgba(0, 0, 0, 0.5);
   --elev-3: 0 14px 40px rgba(0, 0, 0, 0.6);
-  --glow-green: 0 6px 24px rgba(86, 197, 104, 0.4);
+  --glow-green: 0 6px 24px rgba(118, 104, 255, 0.42);
 
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
 
   /* type roles */
-  --font-display:
-    "Bahnschrift", "DIN Next", "Oswald", "Segoe UI Semibold", sans-serif;
-  --font-body: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
-  --font-num: "Bahnschrift", "Segoe UI", ui-monospace, monospace;
+  --font-display: "Roboto", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Roboto", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-num: "Roboto", "Segoe UI", ui-monospace, monospace;
 
   /* ------------------------------------------------------------
      Legacy aliases — keep older view code compiling while it is
@@ -97,8 +125,8 @@
   --brand-grad: var(--green-grad);
   --brand-grad-soft: linear-gradient(
     135deg,
-    rgba(86, 197, 104, 0.22),
-    rgba(107, 220, 125, 0.12)
+    rgba(118, 104, 255, 0.24),
+    rgba(67, 199, 244, 0.12)
   );
 
   --shadow-1: var(--elev-1);
@@ -129,7 +157,7 @@ body {
   color: var(--text-1);
   background: var(--surface-0);
   -webkit-font-smoothing: antialiased;
-  text-rendering: geometricPrecision;
+  text-rendering: optimizeLegibility;
   user-select: none;
   font-size: 14px;
 }
@@ -208,7 +236,7 @@ h4 {
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(86, 197, 104, 0.4);
+  background: rgba(118, 104, 255, 0.42);
   background-clip: padding-box;
 }
 
@@ -264,7 +292,7 @@ h4 {
   color: #07150a;
   background: var(--green-grad);
   border-color: transparent;
-  box-shadow: 0 6px 18px rgba(86, 197, 104, 0.22);
+  box-shadow: 0 6px 18px rgba(118, 104, 255, 0.24);
 }
 .btn-primary:hover:not(:disabled) {
   background: var(--green-grad);

@@ -99,50 +99,32 @@ const close = () => window.royale?.window.close();
   gap: 9px;
   height: 100%;
   flex: 1;
-  padding-left: 0;
+  padding-left: 9px;
 }
 .brand-wave {
-  position: relative;
-  width: 54px;
-  height: 100%;
+  width: 31px;
+  height: 31px;
   display: grid;
   place-items: center;
-  background: linear-gradient(
-    135deg,
-    rgba(154, 124, 255, 0.18),
-    rgba(89, 212, 119, 0.12)
-  );
-  border-right: 1px solid var(--hairline);
-  border-radius: 0 0 21px 0;
-}
-.brand-wave::after {
-  content: "";
-  position: absolute;
-  right: -10px;
-  bottom: -1px;
-  width: 18px;
-  height: 10px;
-  border: 2px solid var(--green-line);
-  border-top: 0;
-  border-left: 0;
-  border-radius: 0 0 18px 0;
-  opacity: 0.65;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid var(--hairline);
 }
 .mark {
-  width: 27px;
-  height: 27px;
-  border-radius: 8px;
+  width: 25px;
+  height: 25px;
+  border-radius: 6px;
   display: block;
-  object-fit: cover;
+  object-fit: contain;
   background: transparent;
-  box-shadow: 0 2px 10px rgba(86, 197, 104, 0.4);
+  box-shadow: 0 2px 10px rgba(118, 104, 255, 0.42);
   transition:
     transform 0.25s var(--ease),
     box-shadow 0.25s var(--ease);
 }
 .drag:hover .mark {
-  transform: scale(1.1) rotate(-6deg);
-  box-shadow: 0 4px 16px rgba(86, 197, 104, 0.6);
+  transform: scale(1.06);
+  box-shadow: 0 4px 16px rgba(118, 104, 255, 0.62);
 }
 .name {
   margin-left: 7px;

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { useRoute } from "vue-router";
 import Icon from "@/components/Icon.vue";
 import UiSwitch from "@/components/ui/UiSwitch.vue";
 import FabricLogo from "@/components/FabricLogo.vue";
@@ -8,13 +9,28 @@ import MarkdownContent from "@/components/MarkdownContent.vue";
 import { GAME } from "@shared/constants";
 import type { InstalledMod, ModProject } from "@shared/types";
 import { useModsStore } from "@/stores/mods";
+import { useResourcesStore } from "@/stores/resources";
+import { useShadersStore } from "@/stores/shaders";
 import { useSettingsStore } from "@/stores/settings";
 import { useLocale } from "@/composables/useLocale";
 
-const mods = useModsStore();
+const route = useRoute();
+const resourceMode = route.name === "resources";
+const shaderMode = route.name === "shaders";
+const fileMode = resourceMode || shaderMode;
+const baseMods = useModsStore();
+const resourcesStore = useResourcesStore();
+const shadersStore = useShadersStore();
+const mods = (shaderMode
+  ? shadersStore
+  : resourceMode
+    ? resourcesStore
+    : baseMods) as unknown as ReturnType<typeof useModsStore>;
 const settingsStore = useSettingsStore();
 const { language, tr } = useLocale();
-const tab = ref<"market" | "installed">("market");
+const tab = ref<"market" | "installed">(
+  route.query.tab === "installed" ? "installed" : "market",
+);
 const query = ref("");
 const category = ref("all");
 const sort = ref("relevance");
@@ -26,8 +42,13 @@ const detail = ref<{ project: ModProject; installed?: InstalledMod } | null>(
 );
 const detailLoading = ref(false);
 const galleryIndex = ref(0);
+const contextMenu = ref<{
+  item: InstalledMod;
+  x: number;
+  y: number;
+} | null>(null);
 
-const categories = [
+const modCategories = [
   { id: "all", label: "Все категории", icon: "layers" },
   { id: "optimization", label: "Оптимизация", icon: "gauge" },
   { id: "utility", label: "Утилиты", icon: "settings" },
@@ -38,6 +59,33 @@ const categories = [
   { id: "technology", label: "Технологии", icon: "chip" },
   { id: "magic", label: "Магия", icon: "brush" },
 ];
+const resourceCategories = [
+  { id: "all", label: "Все категории", icon: "layers" },
+  { id: "16x-or-lower", label: "16× и меньше", icon: "image" },
+  { id: "32x", label: "32×", icon: "image" },
+  { id: "64x", label: "64×", icon: "image" },
+  { id: "128x", label: "128×", icon: "gallery" },
+  { id: "256x", label: "256×", icon: "gallery" },
+  { id: "512x-or-higher", label: "512× и выше", icon: "expand" },
+  { id: "audio", label: "Звуки", icon: "video" },
+  { id: "fonts", label: "Шрифты", icon: "code" },
+  { id: "gui", label: "Интерфейс", icon: "sliders" },
+  { id: "models", label: "3D-модели", icon: "cube" },
+];
+const shaderCategories = [
+  { id: "all", label: "Все категории", icon: "layers" },
+  { id: "fantasy", label: "Фэнтези", icon: "sparkles" },
+  { id: "realistic", label: "Реалистичные", icon: "image" },
+  { id: "semi-realistic", label: "Полуреалистичные", icon: "gallery" },
+  { id: "vanilla-like", label: "В стиле Vanilla", icon: "cube" },
+  { id: "cartoon", label: "Мультяшные", icon: "palette" },
+  { id: "potato", label: "Для слабых ПК", icon: "gauge" },
+];
+const categories = shaderMode
+  ? shaderCategories
+  : resourceMode
+    ? resourceCategories
+    : modCategories;
 const sorts = [
   { id: "relevance", label: "Релевантность" },
   { id: "downloads", label: "Загрузки" },
@@ -70,6 +118,53 @@ const canLoadMore = computed(
 const currentGallery = computed(
   () => detail.value?.project.gallery[galleryIndex.value] ?? null,
 );
+const contentIcon = computed(() =>
+  shaderMode ? "sparkles" : resourceMode ? "palette" : "mods",
+);
+const pageTitle = computed(() =>
+  shaderMode ? "Шейдеры" : resourceMode ? "Ресурспаки" : "Модификации",
+);
+const typeLabel = computed(() =>
+  shaderMode ? "Shader pack" : resourceMode ? "Resource pack" : "Fabric",
+);
+const searchMarketPlaceholder = computed(() =>
+  shaderMode
+    ? "Найти шейдер в Modrinth…"
+    : resourceMode
+      ? "Найти ресурспак в Modrinth…"
+      : "Найти мод в Modrinth…",
+);
+const searchInstalledPlaceholder = computed(() =>
+  shaderMode
+    ? "Поиск среди шейдеров…"
+    : resourceMode
+      ? "Поиск среди ресурспаков…"
+      : "Поиск среди установленных…",
+);
+const compatibleLabel = computed(() =>
+  shaderMode
+    ? "совместимых шейдеров"
+    : resourceMode
+      ? "совместимых ресурспаков"
+      : "совместимых модов",
+);
+const singularLabel = computed(() =>
+  shaderMode ? "шейдерпак" : resourceMode ? "ресурспак" : "мод",
+);
+const pluralForms = computed<[string, string, string]>(() =>
+  shaderMode
+    ? ["шейдерпак", "шейдерпака", "шейдерпаков"]
+    : resourceMode
+      ? ["ресурспак", "ресурспака", "ресурспаков"]
+      : ["мод", "мода", "модов"],
+);
+
+watch(
+  () => route.query.tab,
+  (value) => {
+    if (value === "market" || value === "installed") tab.value = value;
+  },
+);
 
 function formatDownloads(value: number): string {
   return new Intl.NumberFormat(language.value, {
@@ -77,8 +172,27 @@ function formatDownloads(value: number): string {
     maximumFractionDigits: 1,
   }).format(value);
 }
-function install(project: ModProject): void {
-  void mods.installLatest(project);
+function russianCount(
+  count: number,
+  one: string,
+  few: string,
+  many: string,
+): string {
+  const tens = count % 100;
+  const units = count % 10;
+  const word =
+    tens >= 11 && tens <= 14
+      ? many
+      : units === 1
+        ? one
+        : units >= 2 && units <= 4
+          ? few
+          : many;
+  return `${count} ${word}`;
+}
+async function install(project: ModProject): Promise<void> {
+  await mods.installLatest(project);
+  if (fileMode) await settingsStore.refreshGameContent();
 }
 function toggleSelected(filename: string): void {
   const next = new Set(selected.value);
@@ -100,6 +214,7 @@ async function askRemove(items: InstalledMod[]): Promise<void> {
   if (!items.length) return;
   if (settingsStore.settings?.confirmModDelete === false) {
     await mods.removeMany(items);
+    if (fileMode) await settingsStore.refreshGameContent();
     selected.value = new Set();
     return;
   }
@@ -109,6 +224,7 @@ async function confirmRemove(dontAsk: boolean): Promise<void> {
   const items = pendingRemoval.value;
   pendingRemoval.value = [];
   await mods.removeMany(items);
+  if (fileMode) await settingsStore.refreshGameContent();
   selected.value = new Set();
   if (dontAsk && settingsStore.settings) {
     settingsStore.settings.confirmModDelete = false;
@@ -138,7 +254,13 @@ function openInstalled(item: InstalledMod): void {
     project_id: item.projectId || "",
     slug: item.slug || "",
     title: item.title || item.filename,
-    description: item.description || "Локальный мод без данных каталога.",
+    description:
+      item.description ||
+      (shaderMode
+        ? "Локальный шейдерпак без данных каталога."
+        : resourceMode
+          ? "Локальный ресурспак без данных каталога."
+          : "Локальный мод без данных каталога."),
     body: item.body,
     author: "",
     downloads: 0,
@@ -146,14 +268,14 @@ function openInstalled(item: InstalledMod): void {
     categories: [],
     icon_url: item.iconUrl || null,
     gallery: item.gallery || [],
-    project_type: "mod",
+    project_type: shaderMode ? "shader" : resourceMode ? "resourcepack" : "mod",
   };
   void openDetails(project, item);
 }
 function external(project: ModProject): void {
   if (project.slug)
     void window.royale.app.openExternal(
-      `https://modrinth.com/mod/${project.slug}`,
+      `https://modrinth.com/${shaderMode ? "shader" : resourceMode ? "resourcepack" : "mod"}/${project.slug}`,
     );
 }
 function removeDetailed(): void {
@@ -161,6 +283,35 @@ function removeDetailed(): void {
   if (!installed) return;
   detail.value = null;
   void askRemove([installed]);
+}
+function showContext(event: MouseEvent, item: InstalledMod): void {
+  event.preventDefault();
+  const width = 220;
+  const height = 252;
+  contextMenu.value = {
+    item,
+    x: Math.min(event.clientX, window.innerWidth - width - 10),
+    y: Math.min(event.clientY, window.innerHeight - height - 10),
+  };
+}
+function closeContext(): void {
+  contextMenu.value = null;
+}
+async function contextToggle(item: InstalledMod): Promise<void> {
+  closeContext();
+  await mods.toggle(item);
+}
+async function reveal(item: InstalledMod): Promise<void> {
+  closeContext();
+  await (shaderMode
+    ? window.royale.shaders.reveal(item.filename)
+    : resourceMode
+      ? window.royale.resources.reveal(item.filename)
+      : window.royale.mods.reveal(item.filename));
+}
+function contextRemove(item: InstalledMod): void {
+  closeContext();
+  void askRemove([item]);
 }
 
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
@@ -181,8 +332,29 @@ watch(tab, () => {
   selected.value = new Set();
 });
 onMounted(async () => {
+  window.addEventListener("pointerdown", closeContext);
+  window.addEventListener("blur", closeContext);
+  if (fileMode) (mods as unknown as { subscribe: () => void }).subscribe();
   await mods.loadInstalled();
   await mods.search("", "all", "relevance");
+});
+
+async function importPack(): Promise<void> {
+  await baseMods.importPack();
+  await Promise.allSettled([
+    baseMods.loadInstalled(),
+    resourcesStore.loadInstalled(),
+    shadersStore.loadInstalled(),
+    settingsStore.refreshGameContent(),
+  ]);
+}
+
+function exportPack(): void {
+  void baseMods.exportPack();
+}
+onBeforeUnmount(() => {
+  window.removeEventListener("pointerdown", closeContext);
+  window.removeEventListener("blur", closeContext);
 });
 </script>
 
@@ -190,18 +362,25 @@ onMounted(async () => {
   <div class="mods-page">
     <header class="mods-head">
       <div>
-        <p class="eyebrow">Royale Master</p>
-        <h1>{{ tr("Модификации", "Mods", "Modificaciones") }}</h1>
+        <p class="eyebrow">Vela</p>
+        <h1>{{ pageTitle }}</h1>
       </div>
       <div class="instance-facts">
         <div>
           <small>Minecraft</small><b>{{ GAME.minecraftVersion }}</b>
         </div>
         <i />
-        <div class="fabric-fact">
+        <div v-if="!fileMode" class="fabric-fact">
           <FabricLogo />
           <p>
             <small>Загрузчик</small><b>Fabric {{ GAME.fabricLoader }}</b>
+          </p>
+        </div>
+        <div v-else class="fabric-fact">
+          <Icon :name="contentIcon" :size="24" />
+          <p>
+            <small>{{ tr("Тип", "Type", "Tipo") }}</small
+            ><b>{{ typeLabel }}</b>
           </p>
         </div>
         <i />
@@ -227,21 +406,33 @@ onMounted(async () => {
         </button>
       </nav>
       <div class="search-tools">
+        <template v-if="!fileMode">
+          <button
+            class="tool-button pack-tool"
+            :disabled="baseMods.packBusy"
+            title="Импортировать .mrpack или .zip"
+            aria-label="Импортировать сборку"
+            @click="importPack"
+          >
+            <Icon name="import" :size="18" />
+          </button>
+          <button
+            class="tool-button pack-tool"
+            :disabled="baseMods.packBusy"
+            title="Экспортировать сборку"
+            aria-label="Экспортировать сборку"
+            @click="exportPack"
+          >
+            <Icon name="share" :size="18" />
+          </button>
+        </template>
         <label class="mod-search"
           ><Icon name="search" :size="18" /><input
             v-model="query"
             :placeholder="
               tab === 'market'
-                ? tr(
-                    'Найти мод в Modrinth…',
-                    'Find a mod on Modrinth…',
-                    'Buscar un mod en Modrinth…',
-                  )
-                : tr(
-                    'Поиск среди установленных…',
-                    'Search installed mods…',
-                    'Buscar mods instalados…',
-                  )
+                ? searchMarketPlaceholder
+                : searchInstalledPlaceholder
             " /></label
         ><button
           v-if="tab === 'market'"
@@ -255,25 +446,37 @@ onMounted(async () => {
         </button>
       </div>
     </div>
+    <Transition name="fade">
+      <div
+        v-if="!fileMode && baseMods.packBusy && baseMods.packProgress"
+        class="pack-progress"
+      >
+        <Icon name="spinner" :size="15" class="spin" />
+        <span>
+          <b>{{ baseMods.packProgress.message }}</b>
+          <small v-if="baseMods.packProgress.detail">{{
+            baseMods.packProgress.detail
+          }}</small>
+        </span>
+        <i :style="{ width: `${baseMods.packProgress.progress * 100}%` }" />
+      </div>
+    </Transition>
 
     <div v-if="tab === 'market'">
       <div class="result-line">
         <p>
           <b>{{ mods.totalHits.toLocaleString(language) }}</b>
-          {{ tr("совместимых модов", "compatible mods", "mods compatibles") }}
+          {{ compatibleLabel }}
         </p>
         <div>
           <span v-if="category !== 'all'">{{ activeCategoryLabel }}</span
           ><span>{{ GAME.minecraftVersion }}</span
-          ><span>Fabric</span>
+          ><span>{{ typeLabel }}</span>
         </div>
       </div>
       <Transition name="fade"
         ><p v-if="mods.error" class="message error">
           <Icon name="alert" :size="16" />{{ mods.error }}
-        </p>
-        <p v-else-if="mods.notice" class="message success">
-          <Icon name="check" :size="16" />{{ mods.notice }}
         </p></Transition
       >
       <div v-if="mods.loading && !mods.results.length" class="mod-grid">
@@ -302,7 +505,7 @@ onMounted(async () => {
               alt=""
               loading="eager"
               decoding="async"
-            /><Icon v-else name="cube" :size="27" />
+            /><Icon v-else :name="contentIcon" :size="27" />
           </div>
           <div class="mod-copy">
             <div class="mod-title">
@@ -319,22 +522,14 @@ onMounted(async () => {
             <p>{{ project.description }}</p>
             <div class="compatibility">
               <span><i />Совместим</span><b>{{ GAME.minecraftVersion }}</b
-              ><b>Fabric</b>
+              ><b>{{ fileMode ? "ZIP" : "Fabric" }}</b>
             </div>
           </div>
           <div class="mod-actions" @click.stop>
             <button class="more-button" @click="openDetails(project)">
               {{ tr("Подробнее", "Details", "Detalles") }}</button
             ><button
-              v-if="mods.isInstalled(project)"
-              class="install-button installed"
-              disabled
-            >
-              <Icon name="check" :size="16" />{{
-                tr("Установлено", "Installed", "Instalado")
-              }}</button
-            ><button
-              v-else
+              v-if="!mods.isInstalled(project)"
               class="install-button"
               :disabled="mods.busy.has(project.project_id)"
               @click="install(project)"
@@ -381,13 +576,7 @@ onMounted(async () => {
           }}
         </button>
         <div>
-          <b>{{ mods.installed.length }} модов</b
-          ><small
-            >{{ mods.installed.filter((item) => item.enabled).length }} включено
-            ·
-            {{ mods.installed.filter((item) => !item.enabled).length }}
-            отключено</small
-          >
+          <b>{{ russianCount(mods.installed.length, ...pluralForms) }}</b>
         </div>
       </div>
       <Transition name="bulk"
@@ -398,11 +587,11 @@ onMounted(async () => {
             >
           </p>
           <div>
-            <button @click="bulkToggle(true)">
+            <button v-if="!fileMode" @click="bulkToggle(true)">
               <Icon name="power" :size="15" />{{
                 tr("Включить", "Enable", "Activar")
               }}</button
-            ><button @click="bulkToggle(false)">
+            ><button v-if="!fileMode" @click="bulkToggle(false)">
               <Icon name="powerOff" :size="15" />{{
                 tr("Отключить", "Disable", "Desactivar")
               }}</button
@@ -423,6 +612,7 @@ onMounted(async () => {
             selected: selected.has(item.filename),
           }"
           @click="openInstalled(item)"
+          @contextmenu="showContext($event, item)"
         >
           <button
             class="select-box"
@@ -439,7 +629,7 @@ onMounted(async () => {
               v-if="item.iconUrl"
               :src="item.iconUrl"
               alt=""
-              loading="eager" /><Icon v-else name="cube" :size="22"
+              loading="eager" /><Icon v-else :name="contentIcon" :size="22"
           /></span>
           <div class="installed-copy">
             <h3>{{ item.title || item.filename }}</h3>
@@ -451,13 +641,7 @@ onMounted(async () => {
               ></small
             >
           </div>
-          <span class="state-copy" :class="{ on: item.enabled }"
-            ><Icon
-              :name="item.enabled ? 'power' : 'powerOff'"
-              :size="15"
-            /><b>{{ item.enabled ? "Включён" : "Отключён" }}</b></span
-          >
-          <div @click.stop>
+          <div v-if="!fileMode" @click.stop>
             <UiSwitch
               :model-value="item.enabled"
               @update:model-value="mods.toggle(item)"
@@ -478,14 +662,22 @@ onMounted(async () => {
           {{
             mods.installed.length
               ? "По запросу ничего нет"
-              : "Моды ещё не установлены"
+              : shaderMode
+                ? "Шейдеры ещё не установлены"
+                : resourceMode
+                  ? "Ресурспаки ещё не установлены"
+                  : "Моды ещё не установлены"
           }}
         </h3>
         <p>
           {{
             mods.installed.length
               ? "Измените строку поиска."
-              : "Откройте Маркет и установите первый мод."
+              : shaderMode
+                ? "Откройте Маркет и установите первый шейдер."
+                : resourceMode
+                  ? "Откройте Маркет и установите первый ресурспак."
+                  : "Откройте Маркет и установите первый мод."
           }}
         </p>
         <button
@@ -497,6 +689,75 @@ onMounted(async () => {
         </button>
       </div>
     </div>
+
+    <Teleport to="body">
+      <Transition name="context-pop">
+        <div
+          v-if="contextMenu"
+          class="mod-context-menu"
+          :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
+          @pointerdown.stop
+          @contextmenu.prevent
+        >
+          <header>
+            <span class="context-icon">
+              <img
+                v-if="contextMenu.item.iconUrl"
+                :src="contextMenu.item.iconUrl"
+                alt=""
+              />
+              <Icon v-else :name="contentIcon" :size="18" />
+            </span>
+            <div>
+              <b>{{ contextMenu.item.title || contextMenu.item.filename }}</b>
+              <small>{{
+                contextMenu.item.versionNumber ||
+                (shaderMode
+                  ? "Локальный шейдерпак"
+                  : resourceMode
+                    ? "Локальный ресурспак"
+                    : "Локальный мод")
+              }}</small>
+            </div>
+          </header>
+          <button
+            @click="
+              openInstalled(contextMenu.item);
+              closeContext();
+            "
+          >
+            <Icon name="external" :size="15" />Открыть описание
+          </button>
+          <button @click="reveal(contextMenu.item)">
+            <Icon name="folder" :size="15" />Показать в папке
+          </button>
+          <button v-if="!fileMode" @click="contextToggle(contextMenu.item)">
+            <Icon
+              :name="contextMenu.item.enabled ? 'powerOff' : 'power'"
+              :size="15"
+            />
+            {{ contextMenu.item.enabled ? "Отключить" : "Включить" }}
+          </button>
+          <button
+            @click="
+              toggleSelected(contextMenu.item.filename);
+              closeContext();
+            "
+          >
+            <Icon name="select" :size="15" />
+            {{
+              selected.has(contextMenu.item.filename)
+                ? "Снять выделение"
+                : "Выбрать"
+            }}
+          </button>
+          <i />
+          <button class="danger" @click="contextRemove(contextMenu.item)">
+            <Icon name="trash" :size="15" />Удалить
+          </button>
+        </div>
+      </Transition>
+    </Teleport>
 
     <Teleport to="body"
       ><Transition name="drawer"
@@ -535,11 +796,18 @@ onMounted(async () => {
                 ><small>Текущая сборка</small><Icon name="check" :size="16" />
               </div>
             </section>
-            <section>
+            <section v-if="!fileMode">
               <h3><FabricLogo />Загрузчик</h3>
               <div class="loader-choice">
                 <FabricLogo /><b>Fabric</b><span>{{ GAME.fabricLoader }}</span
                 ><Icon name="check" :size="16" />
+              </div>
+            </section>
+            <section v-else>
+              <h3><Icon name="palette" :size="16" />Формат</h3>
+              <div class="loader-choice">
+                <Icon :name="contentIcon" :size="19" /><b>{{ typeLabel }}</b
+                ><span>ZIP</span><Icon name="check" :size="16" />
               </div>
             </section>
             <section>
@@ -583,11 +851,19 @@ onMounted(async () => {
                   ><img
                     v-if="detail.project.icon_url"
                     :src="detail.project.icon_url"
-                    alt="" /><Icon v-else name="cube" :size="28"
+                    alt="" /><Icon v-else :name="contentIcon" :size="28"
                 /></span>
                 <div>
                   <p class="eyebrow">
-                    {{ detail.installed ? "Установленный мод" : "Modrinth" }}
+                    {{
+                      detail.installed
+                        ? shaderMode
+                          ? "Установленный шейдерпак"
+                          : resourceMode
+                            ? "Установленный ресурспак"
+                            : "Установленный мод"
+                        : "Modrinth"
+                    }}
                   </p>
                   <h2>{{ detail.project.title }}</h2>
                   <span v-if="detail.project.author"
@@ -614,7 +890,13 @@ onMounted(async () => {
                       v-if="currentGallery"
                       :key="currentGallery"
                       :src="currentGallery"
-                      alt="Скриншот мода" /></Transition
+                      :alt="
+                        shaderMode
+                          ? 'Скриншот шейдера'
+                          : resourceMode
+                            ? 'Скриншот ресурспака'
+                            : 'Скриншот мода'
+                      " /></Transition
                   ><button
                     class="prev"
                     @click="
@@ -639,7 +921,11 @@ onMounted(async () => {
                 </section>
                 <div class="detail-meta">
                   <span><i />Совместим с {{ GAME.minecraftVersion }}</span
-                  ><span><FabricLogo />Fabric</span
+                  ><span v-if="!fileMode"><FabricLogo />Fabric</span
+                  ><span v-else
+                    ><Icon :name="contentIcon" :size="14" />{{
+                      typeLabel
+                    }}</span
                   ><span v-if="detail.project.downloads"
                     ><Icon name="download" :size="14" />{{
                       formatDownloads(detail.project.downloads)
@@ -671,7 +957,7 @@ onMounted(async () => {
                 class="btn btn-danger"
                 @click="removeDetailed"
               >
-                <Icon name="trash" :size="16" />Удалить мод
+                <Icon name="trash" :size="16" />{{ `Удалить ${singularLabel}` }}
               </button>
             </footer>
           </section>
@@ -682,13 +968,17 @@ onMounted(async () => {
       v-if="pendingRemoval.length"
       :title="
         pendingRemoval.length === 1
-          ? 'Удалить мод?'
-          : `Удалить ${pendingRemoval.length} модов?`
+          ? `Удалить ${singularLabel}?`
+          : `Удалить ${russianCount(pendingRemoval.length, ...pluralForms)}?`
       "
       :message="
         pendingRemoval.length === 1
           ? `Файл «${pendingRemoval[0].title || pendingRemoval[0].filename}» будет удалён из сборки.`
-          : 'Выбранные файлы будут удалены из папки mods. Это действие нельзя отменить внутри лаунчера.'
+          : shaderMode
+            ? 'Выбранные файлы будут удалены из папки shaderpacks. Это действие нельзя отменить внутри лаунчера.'
+            : resourceMode
+              ? 'Выбранные файлы будут удалены из папки resourcepacks. Это действие нельзя отменить внутри лаунчера.'
+              : 'Выбранные файлы будут удалены из папки mods. Это действие нельзя отменить внутри лаунчера.'
       "
       @cancel="pendingRemoval = []"
       @confirm="confirmRemove"
@@ -719,7 +1009,7 @@ onMounted(async () => {
   gap: 15px;
   padding: 9px 14px;
   border-radius: 12px;
-  background: rgba(17, 23, 19, 0.76);
+  background: rgba(17, 19, 29, 0.76);
   border: 1px solid var(--hairline);
   backdrop-filter: blur(14px);
 }
@@ -766,7 +1056,7 @@ onMounted(async () => {
   justify-content: space-between;
   gap: 18px;
   border-radius: 14px;
-  background: rgba(10, 14, 11, 0.89);
+  background: rgba(11, 13, 24, 0.89);
   border: 1px solid var(--hairline);
   backdrop-filter: blur(20px);
   box-shadow: 0 12px 36px rgba(0, 0, 0, 0.18);
@@ -864,6 +1154,67 @@ onMounted(async () => {
   border-color: var(--green-line);
   background: var(--green-soft);
 }
+.pack-tool {
+  width: 44px;
+  padding: 0;
+  justify-content: center;
+  flex: 0 0 44px;
+  color: var(--text-2);
+}
+.pack-tool:hover:not(:disabled) {
+  color: var(--text-0);
+  border-color: var(--hairline-strong);
+  background: var(--surface-3);
+}
+.pack-tool:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+.pack-progress {
+  position: relative;
+  min-height: 42px;
+  margin: -7px 0 13px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  overflow: hidden;
+  border-radius: 10px;
+  color: var(--text-2);
+  background: rgba(17, 19, 29, 0.9);
+  border: 1px solid var(--hairline);
+}
+.pack-progress > svg,
+.pack-progress > span {
+  position: relative;
+  z-index: 1;
+}
+.pack-progress > span {
+  min-width: 0;
+}
+.pack-progress b,
+.pack-progress small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pack-progress b {
+  color: var(--text-0);
+  font-size: 10.5px;
+}
+.pack-progress small {
+  margin-top: 2px;
+  color: var(--text-3);
+  font-size: 9px;
+}
+.pack-progress > i {
+  position: absolute;
+  inset: auto auto 0 0;
+  height: 2px;
+  background: var(--green);
+  transition: width 0.2s linear;
+}
 .tool-button i {
   position: absolute;
   right: 7px;
@@ -892,7 +1243,7 @@ onMounted(async () => {
   padding: 5px 8px;
   border-radius: 7px;
   color: var(--text-2);
-  background: #111713b8;
+  background: #11131db8;
   border: 1px solid var(--hairline);
 }
 .message {
@@ -904,8 +1255,13 @@ onMounted(async () => {
   font-size: 11px;
 }
 .message.error {
+  max-height: 72px;
+  overflow: auto;
   color: var(--danger);
   background: rgba(255, 93, 108, 0.1);
+  font-size: 10px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 .message.success {
   color: var(--green);
@@ -924,7 +1280,7 @@ onMounted(async () => {
   grid-template-rows: 1fr auto;
   column-gap: 13px;
   border-radius: 14px;
-  background: rgba(17, 23, 19, 0.9);
+  background: rgba(17, 19, 29, 0.9);
   border: 1px solid var(--hairline);
   backdrop-filter: blur(16px);
   cursor: pointer;
@@ -937,7 +1293,7 @@ onMounted(async () => {
 .mod-card:hover {
   transform: translateY(-4px);
   border-color: var(--green-line);
-  background: rgba(23, 31, 25, 0.97);
+  background: rgba(24, 27, 40, 0.97);
   box-shadow: 0 16px 38px rgba(0, 0, 0, 0.28);
 }
 .mod-icon-shell {
@@ -1054,7 +1410,7 @@ onMounted(async () => {
   align-items: center;
   gap: 7px;
   border-radius: 8px;
-  color: #07130a;
+  color: #f7f5ff;
   background: var(--green-grad);
   font-size: 10.5px;
   font-weight: 750;
@@ -1116,7 +1472,7 @@ onMounted(async () => {
   align-items: center;
   gap: 12px;
   border-radius: 13px;
-  background: rgba(17, 23, 19, 0.82);
+  background: rgba(17, 19, 29, 0.82);
   border: 1px solid var(--hairline);
 }
 .select-all {
@@ -1133,7 +1489,7 @@ onMounted(async () => {
   display: grid;
   place-items: center;
   border-radius: 6px;
-  color: #07130a;
+  color: #f7f5ff;
   background: var(--surface-3);
   border: 1px solid var(--hairline-strong);
 }
@@ -1171,7 +1527,7 @@ onMounted(async () => {
   justify-content: space-between;
   border-radius: 12px;
   color: var(--green);
-  background: #1d3223f2;
+  background: #202642f2;
   border: 1px solid var(--green-line);
   box-shadow: 0 12px 32px #0005;
   backdrop-filter: blur(16px);
@@ -1227,13 +1583,13 @@ onMounted(async () => {
   align-items: center;
   gap: 12px;
   border-radius: 12px;
-  background: rgba(17, 23, 19, 0.9);
+  background: rgba(17, 19, 29, 0.9);
   border: 1px solid var(--hairline);
   cursor: pointer;
 }
 .installed-list article:hover {
   transform: translateX(3px);
-  background: rgba(23, 31, 25, 0.97);
+  background: rgba(24, 27, 40, 0.97);
   border-color: var(--hairline-strong);
 }
 .installed-list article.disabled {
@@ -1336,7 +1692,7 @@ onMounted(async () => {
   position: fixed;
   inset: 0;
   z-index: 500;
-  background: rgba(3, 6, 4, 0.62);
+  background: rgba(7, 8, 17, 0.62);
   backdrop-filter: blur(7px);
 }
 .filter-drawer {
@@ -1347,7 +1703,7 @@ onMounted(async () => {
   width: min(420px, 92vw);
   padding: 20px;
   overflow: auto;
-  background: #111713;
+  background: #11131d;
   border-left: 1px solid var(--hairline-strong);
   box-shadow: -24px 0 70px #0008;
 }
@@ -1446,7 +1802,7 @@ onMounted(async () => {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  background: #111713f2;
+  background: #11131df2;
   border-top: 1px solid var(--hairline);
 }
 .drawer-enter-active,
@@ -1478,7 +1834,7 @@ onMounted(async () => {
   flex-direction: column;
   overflow: hidden;
   border-radius: 19px;
-  background: #111713;
+  background: #11131d;
   border: 1px solid var(--hairline-strong);
   box-shadow: 0 32px 110px #000c;
 }
@@ -1537,7 +1893,7 @@ onMounted(async () => {
   height: 300px;
   overflow: hidden;
   border-radius: 14px;
-  background: #090d0a;
+  background: #0b0d17;
 }
 .detail-gallery > img {
   width: 100%;
@@ -1553,11 +1909,11 @@ onMounted(async () => {
   place-items: center;
   border-radius: 50%;
   color: #fff;
-  background: #050805b5;
+  background: #070812b5;
   transform: translateY(-50%);
 }
 .detail-gallery button:hover {
-  background: #19261d;
+  background: #1c2138;
   transform: translateY(-50%) scale(1.08);
 }
 .detail-gallery .prev {
@@ -1644,6 +2000,100 @@ onMounted(async () => {
 .modal-enter-from .detail-dialog,
 .modal-leave-to .detail-dialog {
   transform: translateY(24px) scale(0.975);
+}
+.mod-context-menu {
+  position: fixed;
+  z-index: 720;
+  width: 220px;
+  padding: 7px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 12px;
+  background: rgba(20, 23, 38, 0.98);
+  box-shadow: 0 22px 60px #000b;
+  backdrop-filter: blur(20px);
+}
+.mod-context-menu header {
+  margin-bottom: 6px;
+  padding: 7px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border-bottom: 1px solid var(--hairline);
+}
+.context-icon {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  overflow: hidden;
+  border-radius: 8px;
+  color: var(--green);
+  background: var(--surface-3);
+}
+.context-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.mod-context-menu header div {
+  min-width: 0;
+}
+.mod-context-menu header b,
+.mod-context-menu header small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mod-context-menu header b {
+  color: var(--text-0);
+  font-size: 10.5px;
+}
+.mod-context-menu header small {
+  margin-top: 2px;
+  color: var(--text-3);
+  font-size: 8.5px;
+}
+.mod-context-menu > button {
+  width: 100%;
+  height: 33px;
+  padding: 0 9px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border-radius: 8px;
+  color: var(--text-1);
+  font-size: 10px;
+  text-align: left;
+}
+.mod-context-menu > button:hover {
+  color: var(--text-0);
+  background: var(--surface-3);
+}
+.mod-context-menu > button.danger {
+  color: var(--danger);
+}
+.mod-context-menu > button.danger:hover {
+  background: rgba(255, 93, 108, 0.1);
+}
+.mod-context-menu > i {
+  display: block;
+  height: 1px;
+  margin: 5px 7px;
+  background: var(--hairline);
+}
+.context-pop-enter-active,
+.context-pop-leave-active {
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+  transform-origin: top left;
+}
+.context-pop-enter-from,
+.context-pop-leave-to {
+  opacity: 0;
+  transform: translateY(-4px) scale(0.98);
 }
 .spin {
   animation: spin 0.8s linear infinite;
