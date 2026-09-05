@@ -1,13 +1,13 @@
 /**
  * Shared constants — single source of truth for both main and renderer.
- * Version data mirrors the Royale Master client repo (gradle.properties / fabric.mod.json).
+ * Version data mirrors Vela Client 26.2.
  */
 
 export const BRAND = {
-  name: "ROYALE",
-  fullName: "Royale Master",
-  tagline: "Королевский клиент для Minecraft",
-  repo: "https://github.com/SqwaTik/Royale-Master",
+  name: "VELA",
+  fullName: "Vela Client",
+  tagline: "Чистый клиент для Minecraft",
+  repo: "https://github.com/SqwaTik/Vela-Client",
 } as const;
 
 /**
@@ -18,7 +18,7 @@ export const BRAND = {
  * requirements enabled and the "XboxLive.signin offline_access" scopes.
  * Until a real ID is provided, MS login will fail with an honest error.
  */
-export const MS_CLIENT_ID = "";
+export const MS_CLIENT_ID = "66e755ad-931b-4da8-ba37-7242d585a21f";
 
 /** Public Discord application ID. Rich Presence never needs a client secret. */
 export const DISCORD_APP_ID = "1144713648120549536";
@@ -33,14 +33,12 @@ export const MS_OAUTH = {
 
 /** Target game + loader versions the launcher installs. */
 export const GAME = {
-  /** Minecraft version the Royale client is built for. */
-  minecraftVersion: "1.21.11",
-  yarnMappings: "1.21.11+build.4",
-  fabricLoader: "0.18.4",
-  fabricApi: "0.141.2+1.21.11",
-  javaMajor: 21,
-  /** Royale client mod version. */
-  clientVersion: "1.0.13",
+  minecraftVersion: "26.2",
+  yarnMappings: "26.2+build.1",
+  fabricLoader: "0.19.4",
+  fabricApi: "0.158.0+26.2",
+  javaMajor: 25,
+  clientVersion: "0.1.0",
   loader: "fabric" as const,
 } as const;
 

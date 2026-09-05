@@ -1,50 +1,47 @@
-# Royale Launcher
+# Vela Launcher
 
-Современный настольный лаунчер для сборки **Royale Master** на Minecraft `1.21.11` и Fabric. Интерфейс построен на Electron, Vue 3 и TypeScript; установка и запуск выполняются настоящими сервисами лаунчера, без демонстрационных заглушек.
+Компактный Windows-лаунчер для Vela Client на Minecraft 26.2 и Fabric. Интерфейс работает в WebView2, а установка игры, авторизация и хранение данных выполняются нативным .NET-хостом.
 
 ## Возможности
 
-- установка Minecraft, Fabric Loader, Fabric API, Java 21 и сборки Royale с подробным прогрессом;
-- пауза, продолжение и отмена загрузки;
-- запуск игры, автоматический выбор Java и настраиваемая память;
-- каталог Modrinth с поиском, фильтрами, изображениями, галереями и Markdown-описаниями;
-- проверка совместимости, зависимостей и состояния установленных модов;
-- групповое включение, отключение и удаление модов с подтверждением;
-- автономные профили, Ely.by и LittleSkin с поддержкой authlib-injector;
-- 3D-просмотр скина и редактор с рисованием прямо по модели, слоями, Classic/Slim, палитрой и HEX;
-- пользовательские фоны: изображения, GIF и видео в режимах заполнения и вписывания;
-- скриншоты Minecraft на главной странице;
-- Discord Rich Presence, стартовое обучение и диалог восстановления после сбоя;
-- интерфейс на русском, английском и испанском языках.
+- аккаунты Microsoft, Offline, Ely.by и LittleSkin в одном Account Manager;
+- отображение настоящей головы скина для Microsoft, Ely.by и LittleSkin;
+- безопасный Microsoft OAuth Authorization Code + PKCE без client secret;
+- шифрование токенов через Windows DPAPI, пароли Ely.by и LittleSkin не сохраняются;
+- установка Minecraft 26.2, Fabric Loader, Fabric API и Vela Client;
+- автоматическое обновление встроенного Vela Client и резервное копирование старых Royale/Storage Organizer JAR;
+- единый поиск по функциям, бинды Toggle/Hold через контекстное меню;
+- сохранение модулей, настроек интерфейса, цветов, друзей, маркеров и конфигов;
+- импорт и экспорт конфигов через системные диалоги Windows;
+- фирменный тёмный интерфейс, собственный RGB/HEX-пикер и масштабирование UI.
 
-Вход Microsoft временно скрыт из интерфейса: для него нужен зарегистрированный OAuth-клиент. Локальные профили, Ely.by и LittleSkin работают без Microsoft Application ID.
+Для входа Microsoft одного Entra Client ID недостаточно: идентификатор стороннего лаунчера должен быть разрешён Minecraft Services. Если сервис возвращает `Invalid app registration`, подайте приложение на проверку через [App Registration Info](https://aka.ms/AppRegInfo). Лаунчер показывает это ограничение понятным сообщением и не подменяет чужие Client ID.
 
 ## Разработка
 
-Требования: Node.js 20+, npm и Windows 10/11.
+Требования: Node.js 20+, npm, .NET SDK 9 и Windows 10/11 с Microsoft Edge WebView2 Runtime.
 
-```bash
+```powershell
 npm install
-npm run dev
-```
-
-Проверки и production-сборка:
-
-```bash
 npm run typecheck
 npm run build
-npm run dist
+dotnet build native/VelaLauncher.Host/VelaLauncher.Host.csproj -c Release
 ```
 
-`npm run build` создаёт распакованную Electron-сборку в `out/`. `npm run dist` дополнительно собирает Windows-дистрибутив через electron-builder.
+Публикация x64-сборки:
+
+```powershell
+npm run build
+dotnet publish native/VelaLauncher.Host/VelaLauncher.Host.csproj -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o outputs/VelaLauncher
+```
 
 ## Структура
 
 ```text
-src/main/          Electron, IPC, установка, Java, аккаунты и Modrinth
-src/preload/       безопасный мост между main и renderer
-src/renderer/      Vue-интерфейс, страницы, компоненты и Pinia-хранилища
-src/shared/        общие типы, версии и каналы IPC
+src/webview/                    React-интерфейс WebView2
+src/shared/                     общие версии и типы
+native/VelaLauncher.Host/       WPF/.NET-хост, bridge и игровые сервисы
+native/VelaLauncher.Host/Assets встроенный Vela Client и ресурсы лаунчера
 ```
 
-Игровые файлы и настройки хранятся в пользовательском каталоге `.royale`; они не входят в репозиторий.
+Данные лаунчера и игровая сборка хранятся в пользовательском каталоге `.vela`. Исходный код не содержит паролей, client secret или пользовательских токенов.

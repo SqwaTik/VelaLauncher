@@ -1,25 +1,19 @@
 {
-  "include": [
-    "src/renderer/src/**/*",
-    "src/renderer/src/**/*.vue",
-    "src/shared/**/*",
-    "src/preload/*.d.ts"
-  ],
+  "include": ["src/webview/**/*", "src/shared/**/*"],
   "compilerOptions": {
-    "composite": true,
     "baseUrl": ".",
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "target": "ES2022",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "jsx": "preserve",
+    "jsx": "react-jsx",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "noEmit": true,
     "types": ["vite/client"],
     "paths": {
-      "@/*": ["src/renderer/src/*"],
+      "@/*": ["src/webview/*"],
       "@shared/*": ["src/shared/*"]
     }
   }
