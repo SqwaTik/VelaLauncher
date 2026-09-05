@@ -153,8 +153,8 @@ async function findJava(root: string): Promise<string | null> {
   return null;
 }
 
-/** Install a portable Eclipse Temurin JDK 21 under .royale/jre/java21. */
-export async function installJava21(): Promise<JavaInfo> {
+/** Install the portable Eclipse Temurin JDK required by the active game stack. */
+export async function installRequiredJava(): Promise<JavaInfo> {
   const existing = await probe(await managedJavaExecutable());
   if (existing?.valid) return existing;
 
@@ -175,7 +175,7 @@ export async function installJava21(): Promise<JavaInfo> {
     url,
     destination: archive,
     pendingFile: `${archive}.pending`,
-    headers: { "User-Agent": "RoyaleLauncher/0.1" },
+    headers: { "User-Agent": "VelaLauncher/0.1.5" },
     progressController: (_url, _chunk, written, total) => {
       const now = Date.now();
       if (now - lastAt >= 350) {

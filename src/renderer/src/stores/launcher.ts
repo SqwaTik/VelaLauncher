@@ -29,7 +29,7 @@ function userFacingError(error: unknown): string {
 
 /**
  * Launcher state backed by the real main-process pipeline: install downloads
- * Minecraft + Fabric (+ the Royale client mod), launch spawns the JVM. Progress
+ * Minecraft + Fabric (+ the Vela client mod), launch spawns the JVM. Progress
  * and launch status arrive as IPC events.
  */
 export const useLauncherStore = defineStore("launcher", () => {
@@ -44,6 +44,8 @@ export const useLauncherStore = defineStore("launcher", () => {
   const updateCheckedAt = ref<number | null>(null);
   const crash = ref<LaunchStatus | null>(null);
   const transportBusy = ref(false);
+  const runningCount = ref(0);
+  const preparing = ref(false);
 
   const playtimeMinutes = ref(0);
   const lastPlayed = ref<number | null>(null);
@@ -128,6 +130,8 @@ export const useLauncherStore = defineStore("launcher", () => {
 
     unsubLaunch?.();
     unsubLaunch = window.royale.game.onLaunchStatus((st: LaunchStatus) => {
+      runningCount.value = st.runningCount ?? (st.state === "running" ? 1 : 0);
+      preparing.value = st.preparing ?? st.state === "launching";
       switch (st.state) {
         case "launching":
           state.value = "launching";
@@ -139,8 +143,8 @@ export const useLauncherStore = defineStore("launcher", () => {
           break;
         case "exited":
         case "crashed":
-          state.value = "installed";
-          statusText.value = "";
+          state.value = preparing.value ? "launching" : runningCount.value > 0 ? "running" : "installed";
+          statusText.value = preparing.value ? "Подготовка запуска" : runningCount.value > 0 ? "Игра запущена" : "";
           if (st.state === "crashed") {
             crash.value = st;
             errorText.value = "";
@@ -264,8 +268,9 @@ export const useLauncherStore = defineStore("launcher", () => {
     }
   }
 
+  let accountRefreshPending = false;
   async function play(): Promise<void> {
-    if (state.value !== "installed") return;
+    if (!["installed", "running"].includes(state.value) || preparing.value || accountRefreshPending) return;
     const accountStore = useAccountStore();
     let account = accountStore.active;
     if (!account) {
@@ -274,6 +279,7 @@ export const useLauncherStore = defineStore("launcher", () => {
     }
     errorText.value = "";
     crash.value = null;
+    accountRefreshPending = true;
     try {
       account = await accountStore.ensureActiveSession();
       if (!account) throw new Error("Не удалось подготовить учётную запись");
@@ -287,7 +293,9 @@ export const useLauncherStore = defineStore("launcher", () => {
       });
     } catch (e) {
       errorText.value = userFacingError(e);
-      state.value = "installed";
+      state.value = runningCount.value > 0 ? "running" : "installed";
+    } finally {
+      accountRefreshPending = false;
     }
   }
 
@@ -321,6 +329,8 @@ export const useLauncherStore = defineStore("launcher", () => {
     updateCheckedAt,
     crash,
     transportBusy,
+    runningCount,
+    preparing,
     version,
     isInstalled,
     playtimeMinutes,

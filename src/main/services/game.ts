@@ -2,10 +2,9 @@ import { createHash } from "crypto";
 import { createWriteStream, promises as fs, existsSync } from "fs";
 import { dirname, join } from "path";
 import { totalmem } from "os";
-import { exec, spawn, type ChildProcess } from "child_process";
+import { exec, type ChildProcess } from "child_process";
 import { promisify } from "util";
 import { BrowserWindow } from "electron";
-import extract from "extract-zip";
 import {
   MinecraftFolder,
   Version,
@@ -23,8 +22,6 @@ import {
   installResolvedAssetsTask,
   installAssetsTask,
   getVersionList,
-  getFabricLoaderArtifact,
-  installFabricByLoaderArtifact,
 } from "@xmcl/installer";
 import { CancelledError, type Task, type TaskContext } from "@xmcl/task";
 import type {
@@ -35,17 +32,19 @@ import type {
   StoredAccount,
 } from "../../shared/types";
 import { IPC, GAME, BRAND } from "../../shared/constants";
-import { gameDir, loadState, updateStats } from "./store";
-import { detectJava, installJava21 } from "./java";
+import { gameDir, loadState, updateStats, recordPlaytime } from "./store";
+import { detectJava, installRequiredJava } from "./java";
 import {
   installProject,
   isJarStructurallyValid,
   repairInstalledMods,
 } from "./modrinth";
 import { setDiscordActivity } from "./discord";
+import { bundledClientUpdate, installBundledClient } from "./bundled-client";
+import { syncAppearanceManifest } from "./appearance-export";
 
 const execAsync = promisify(exec);
-const USER_AGENT = "SqwaTik/RoyaleLauncher";
+const USER_AGENT = "SqwaTik/VelaLauncher";
 const FABRIC_API_PROJECT = "P7dR8mSH";
 const pendingGameLogs = new WeakMap<
   BrowserWindow,
@@ -53,8 +52,11 @@ const pendingGameLogs = new WeakMap<
 >();
 
 let currentTask: Task<unknown> | null = null;
+let installing = false;
 let buildProcess: ChildProcess | null = null;
-let activeMinecraftProcess: ChildProcess | null = null;
+let activeMinecraftProcess: ChildProcess | null = null; // Only the process still starting.
+const runningProcesses = new Set<ChildProcess>();
+const cancelledGenerations = new Set<number>();
 let launchInProgress = false;
 let launchGeneration = 0;
 let cancelRequested = false;
@@ -68,7 +70,7 @@ function emitProgress(progress: InstallProgress): void {
 
 function emitLaunch(status: LaunchStatus): void {
   for (const window of BrowserWindow.getAllWindows())
-    window.webContents.send(IPC.gameLaunchStatus, status);
+    window.webContents.send(IPC.gameLaunchStatus, { ...status, runningCount: runningProcesses.size, preparing: launchInProgress });
 }
 
 function createGameLogWindow(): BrowserWindow {
@@ -79,7 +81,7 @@ function createGameLogWindow(): BrowserWindow {
     minHeight: 360,
     show: false,
     autoHideMenuBar: true,
-    backgroundColor: "#08110b",
+    backgroundColor: "#0c0e15",
     title: "Vela Launcher — журнал Minecraft",
     webPreferences: {
       contextIsolation: true,
@@ -90,8 +92,8 @@ function createGameLogWindow(): BrowserWindow {
   const html = `<!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><title>Журнал Minecraft</title>
 <style>
-*{box-sizing:border-box}html,body{margin:0;height:100%;background:#08110b;color:#d7e0d9;font:13px/1.55 "Cascadia Mono",Consolas,monospace}
-header{position:sticky;top:0;display:flex;align-items:center;gap:10px;height:48px;padding:0 18px;background:#0d1710eF;border-bottom:1px solid #263329;backdrop-filter:blur(14px)}
+*{box-sizing:border-box}html,body{margin:0;height:100%;background:#0c0e15;color:#d7e0d9;font:13px/1.55 "Cascadia Mono",Consolas,monospace}
+header{position:sticky;top:0;display:flex;align-items:center;gap:10px;height:48px;padding:0 18px;background:#11141eef;border-bottom:1px solid #282d40;backdrop-filter:blur(14px)}
 header i{width:8px;height:8px;border-radius:50%;background:#7668ff;box-shadow:0 0 14px #7668ff}header b{font:600 13px/1 system-ui;color:#f4f3ff}
 pre{min-height:calc(100% - 48px);margin:0;padding:16px 18px 28px;white-space:pre-wrap;overflow-wrap:anywhere}
 .stderr{color:#ff9b9b}.system{color:#43c7f4}
@@ -160,103 +162,28 @@ export async function isInstalled(): Promise<boolean> {
   }
 }
 
-interface GitHubCommit {
-  sha: string;
-  commit: { message: string; committer?: { date?: string } };
-}
-
-interface GitHubRelease {
-  tag_name?: string;
-  target_commitish?: string;
-  assets?: { name: string; browser_download_url: string }[];
-}
-
-interface RemoteClientInfo {
-  update: ClientUpdateInfo;
-  asset: { name: string; url: string } | null;
-}
-
-async function github<T>(path: string): Promise<T> {
-  const response = await fetch(`https://api.github.com${path}`, {
-    headers: {
-      "User-Agent": USER_AGENT,
-      Accept: "application/vnd.github+json",
-    },
-  });
-  if (!response.ok)
-    throw new Error(`GitHub API: ${response.status} ${response.statusText}`);
-  return response.json() as Promise<T>;
-}
-
-async function remoteClientInfo(): Promise<RemoteClientInfo> {
-  const repoPath = "/repos/SqwaTik/Royale-Master";
-  const repo = await github<{ default_branch: string }>(repoPath);
-  const commit = await github<GitHubCommit>(
-    `${repoPath}/commits/${encodeURIComponent(repo.default_branch)}`,
-  );
-  let release: GitHubRelease | null = null;
-  try {
-    release = await github<GitHubRelease>(`${repoPath}/releases/latest`);
-  } catch {
-    /* no published release */
-  }
-
-  let releaseSha: string | null = null;
-  if (release?.target_commitish) {
-    try {
-      releaseSha = (
-        await github<GitHubCommit>(
-          `${repoPath}/commits/${encodeURIComponent(release.target_commitish)}`,
-        )
-      ).sha;
-    } catch {
-      releaseSha = release.target_commitish;
-    }
-  }
-  const jar = release?.assets?.find((asset) =>
-    asset.name.toLowerCase().endsWith(".jar"),
-  );
-  // Launches only consume published, ready-to-run artifacts. A newer source
-  // commit must never turn the user's Play click into a local Gradle build.
-  const distributableSha = jar && releaseSha ? releaseSha : commit.sha;
-  const distributableVersion = jar
-    ? release?.tag_name ?? GAME.clientVersion
-    : GAME.clientVersion;
-  const activeRoot = await gameDir();
-  let installedSha: string | null = null;
-  try {
-    installedSha =
-      (
-        JSON.parse(
-          await fs.readFile(join(activeRoot, ".royale-client.json"), "utf8"),
-        ) as { commitSha?: string }
-      ).commitSha ?? null;
-  } catch {
-    installedSha = null;
-  }
-  const installed = await isInstalled();
-  const checkedAt = Date.now();
-  await updateStats({ lastUpdateCheck: checkedAt });
-  return {
-    update: {
-      checkedAt,
-      available: installedSha
-        ? installedSha !== distributableSha
-        : installed,
-      installed: Boolean(installedSha),
-      localCommitSha: installedSha,
-      remoteCommitSha: distributableSha,
-      remoteVersion: distributableVersion,
-      commitMessage: commit.commit.message.split("\n")[0] || null,
-      commitDate: commit.commit.committer?.date ?? null,
-      delivery: jar ? "release" : "source-build",
-    },
-    asset: jar ? { name: jar.name, url: jar.browser_download_url } : null,
-  };
-}
-
 export async function checkClientUpdate(): Promise<ClientUpdateInfo> {
-  return (await remoteClientInfo()).update;
+  return bundledClientUpdate(await gameDir());
+}
+
+async function ensureFabricProfile(folder: MinecraftFolder): Promise<void> {
+  const path = folder.getVersionJson(fabricVersionId());
+  try {
+    const local = JSON.parse(await fs.readFile(path, "utf8"));
+    if (local.velaProfileVersion === 1 && local.inheritsFrom === GAME.minecraftVersion) return;
+  } catch { /* install official profile below */ }
+  const response = await fetch(`https://meta.fabricmc.net/v2/versions/loader/${GAME.minecraftVersion}/${GAME.fabricLoader}/profile/json`,
+    { signal: AbortSignal.timeout(20_000), headers: { "User-Agent": USER_AGENT } });
+  if (!response.ok) throw new Error(`Fabric: HTTP ${response.status}`);
+  const profile = await response.json() as Record<string, any>;
+  if (profile.inheritsFrom !== GAME.minecraftVersion || profile.mainClass !== "net.fabricmc.loader.impl.launch.knot.KnotClient" || !Array.isArray(profile.libraries))
+    throw new Error("Fabric вернул несовместимый профиль");
+  await fs.mkdir(dirname(path), { recursive: true });
+  const temporary = `${path}.vela.tmp`;
+  await fs.writeFile(temporary, JSON.stringify({ ...profile, id: fabricVersionId(), velaProfileVersion: 1 }, null, 2));
+  await fs.rename(temporary, path);
+  const resolved = await Version.parse(folder, fabricVersionId());
+  await installResolvedLibrariesTask(resolved.libraries, folder).startAndWait();
 }
 
 function minecraftTaskContext(
@@ -380,219 +307,6 @@ async function runDownload(
   }
 }
 
-async function findFile(
-  root: string,
-  predicate: (name: string, path: string) => boolean,
-): Promise<string | null> {
-  const queue = [root];
-  while (queue.length) {
-    const current = queue.shift()!;
-    let entries;
-    try {
-      entries = await fs.readdir(current, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      const path = join(current, entry.name);
-      if (entry.isFile() && predicate(entry.name, path)) return path;
-      if (entry.isDirectory()) queue.push(path);
-    }
-  }
-  return null;
-}
-
-async function buildRoyaleClient(
-  sha: string,
-  javaPath: string,
-  cacheRoot: string,
-): Promise<string> {
-  const archive = join(cacheRoot, `royale-${sha}.zip`);
-  const work = join(cacheRoot, `royale-${sha}`);
-  await fs.rm(work, { recursive: true, force: true });
-  await fs.mkdir(work, { recursive: true });
-  await runDownload(
-    `https://codeload.github.com/SqwaTik/Royale-Master/zip/${sha}`,
-    archive,
-    "royale",
-    0.77,
-    0.07,
-    "Загрузка Vela",
-    sha.slice(0, 8),
-  );
-  report("build", 0.85, "Сборка Vela", "Распаковка исходного кода", {
-    canPause: false,
-  });
-  await extract(archive, { dir: work });
-  const wrapper = await findFile(
-    work,
-    (name) => name.toLowerCase() === "gradlew.bat",
-  );
-  if (!wrapper)
-    throw new Error("В исходном коде Vela не найден gradlew.bat");
-  const projectRoot = dirname(wrapper);
-  const javaHome = dirname(dirname(javaPath));
-  let lineCount = 0;
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(wrapper, ["build", "--no-daemon", "--console=plain"], {
-      cwd: projectRoot,
-      windowsHide: true,
-      shell: true,
-      env: { ...process.env, JAVA_HOME: javaHome },
-    });
-    buildProcess = child;
-    const handle = (chunk: Buffer): void => {
-      const lines = chunk
-        .toString()
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean);
-      for (const line of lines) {
-        lineCount += 1;
-        report(
-          "build",
-          Math.min(0.95, 0.86 + lineCount * 0.002),
-          "Сборка Vela",
-          line.slice(0, 180),
-          { canPause: false },
-        );
-      }
-    };
-    child.stdout?.on("data", handle);
-    child.stderr?.on("data", handle);
-    child.once("error", reject);
-    child.once("exit", (code) => {
-      buildProcess = null;
-      if (cancelRequested) reject(new Error("Установка отменена"));
-      else if (code === 0) resolve();
-      else reject(new Error(`Gradle завершился с кодом ${code ?? "unknown"}`));
-    });
-  });
-  const libs = join(projectRoot, "build", "libs");
-  const names = await fs.readdir(libs);
-  const candidates = names.filter(
-    (name) =>
-      name.endsWith(".jar") && !/(sources|javadoc|dev|shadow)/i.test(name),
-  );
-  if (!candidates.length)
-    throw new Error("Gradle не создал клиентский JAR в build/libs");
-  const ranked = await Promise.all(
-    candidates.map(async (name) => ({
-      name,
-      stat: await fs.stat(join(libs, name)),
-    })),
-  );
-  ranked.sort((a, b) => b.stat.size - a.stat.size);
-  return join(libs, ranked[0].name);
-}
-
-async function installRoyaleClient(
-  modsPath: string,
-): Promise<void> {
-  const remote = await remoteClientInfo();
-  if (!remote.update.remoteCommitSha)
-    throw new Error("GitHub не вернул SHA последнего коммита Vela");
-  const state = await loadState();
-  const cacheRoot = join(state.settings.storagePath, ".launcher-cache");
-  const instanceRoot = dirname(modsPath);
-  await fs.mkdir(cacheRoot, { recursive: true });
-  const staged = join(
-    cacheRoot,
-    `royale-client-${remote.update.remoteCommitSha}.jar`,
-  );
-  const cachedSize = await fs
-    .stat(staged)
-    .then((stat) => stat.size)
-    .catch(() => 0);
-
-  if (cachedSize < 1024) {
-    if (!remote.asset)
-      throw new Error(
-        "Для текущей версии Vela ещё нет готовой сборки. Локальная Gradle-сборка при запуске отключена.",
-      );
-    await runDownload(
-      remote.asset.url,
-      staged,
-      "royale",
-      0.78,
-      0.15,
-      "Загрузка Vela",
-      remote.asset.name,
-    );
-  } else {
-    report(
-      "royale",
-      0.92,
-      "Vela готов",
-      "Используем проверенный локальный кэш",
-      { canPause: false },
-    );
-  }
-
-  if ((await fs.stat(staged)).size < 1024)
-    throw new Error("Собранный JAR Vela повреждён");
-  let oldJar: string | null = null;
-  try {
-    oldJar =
-      (
-        JSON.parse(
-          await fs.readFile(
-            join(instanceRoot, ".royale-client.json"),
-            "utf8",
-          ),
-        ) as { jarName?: string }
-      ).jarName ?? null;
-  } catch {
-    /* first install */
-  }
-  const jarName = `royale-master-${remote.update.remoteCommitSha.slice(0, 8)}.jar`;
-  const destination = join(modsPath, jarName);
-  await fs.copyFile(staged, destination);
-  if (oldJar && oldJar !== jarName)
-    await fs.rm(join(modsPath, oldJar), { force: true });
-  await fs.writeFile(
-    join(instanceRoot, ".royale-client.json"),
-    JSON.stringify(
-      {
-        jarName,
-        commitSha: remote.update.remoteCommitSha,
-        version: remote.update.remoteVersion,
-        installedAt: Date.now(),
-      },
-      null,
-      2,
-    ),
-    "utf8",
-  );
-  await updateStats({
-    installedCommitSha: remote.update.remoteCommitSha,
-    installedClientVersion: remote.update.remoteVersion,
-  });
-}
-
-async function ensureRoyaleClientHealthy(
-  storagePath: string,
-): Promise<void> {
-  let jarName = "";
-  try {
-    jarName =
-      (
-        JSON.parse(
-          await fs.readFile(join(storagePath, ".royale-client.json"), "utf8"),
-        ) as { jarName?: string }
-      ).jarName ?? "";
-  } catch {
-    /* install metadata will be recreated below */
-  }
-  const path = jarName ? join(storagePath, "mods", jarName) : "";
-  if (path && (await isJarStructurallyValid(path))) return;
-  emitLaunch({
-    state: "launching",
-    message: "Восстанавливаем Vela",
-  });
-  await installRoyaleClient(join(storagePath, "mods"));
-}
-
 export async function pauseInstall(): Promise<boolean> {
   const task = currentTask;
   if (!task?.isRunning) return false;
@@ -651,13 +365,17 @@ function installationErrorMessage(error: unknown): string {
   return joined.length > 280 ? `${joined.slice(0, 277)}…` : joined;
 }
 
+export function gameOperationBusy(): boolean { return launchInProgress || installing; }
+
 export async function installGame(): Promise<void> {
-  if (currentTask || buildProcess) throw new Error("Установка уже выполняется");
+  if (launchInProgress || runningProcesses.size) throw new Error("Закройте Minecraft перед обновлением файлов игры");
+  if (installing || currentTask || buildProcess) throw new Error("Установка уже выполняется");
+  installing = true;
   cancelRequested = false;
   try {
     const state = await loadState();
     let java = await detectJava(state.settings.javaPath);
-    if (!java?.valid) java = await installJava21();
+    if (!java?.valid) java = await installRequiredJava();
     if (!java?.valid)
       throw new Error(
         `Для установки Vela нужна Java ${GAME.javaMajor}+`,
@@ -748,13 +466,7 @@ export async function installGame(): Promise<void> {
       GAME.minecraftVersion,
       { canPause: false },
     );
-    const artifact = await getFabricLoaderArtifact(
-      GAME.minecraftVersion,
-      GAME.fabricLoader,
-    );
-    await installFabricByLoaderArtifact(artifact, folder, {
-      versionId: fabricVersionId(),
-    });
+    await ensureFabricProfile(folder);
     report("fabric", 0.76, "Установка Fabric API", GAME.fabricApi, {
       canPause: false,
     });
@@ -762,9 +474,10 @@ export async function installGame(): Promise<void> {
 
     const modsPath = join(dir, "mods");
     await fs.mkdir(modsPath, { recursive: true });
-    await installRoyaleClient(modsPath);
+    await installBundledClient(dir);
     await repairInstalledMods((message) =>
       report("verify", 0.95, message, undefined, { canPause: false }),
+      java.majorVersion,
     );
     report(
       "verify",
@@ -799,6 +512,8 @@ export async function installGame(): Promise<void> {
       report("error", lastProgress.progress, "Ошибка установки", message);
     }
     throw new Error(message);
+  } finally {
+    installing = false;
   }
 }
 
@@ -1016,13 +731,13 @@ async function repairLaunchFiles(
 }
 
 export async function launchGame(account: StoredAccount): Promise<void> {
-  if (launchInProgress || activeMinecraftProcess)
-    throw new Error("Minecraft уже запускается");
+  if (launchInProgress || installing)
+    throw new Error("Подготовка игры уже выполняется");
   const generation = ++launchGeneration;
-  const cancelled = (): boolean => generation !== launchGeneration;
+  const cancelled = (): boolean => cancelledGenerations.has(generation);
   launchInProgress = true;
   try {
-    const state = await loadState();
+    const state = structuredClone(await loadState());
     if (cancelled()) return;
     const dir = await gameDir();
     const instance = state.instances.find(
@@ -1031,13 +746,13 @@ export async function launchGame(account: StoredAccount): Promise<void> {
     const folder = MinecraftFolder.from(dir);
     const id = fabricVersionId();
     if (!existsSync(folder.getVersionJson(id))) {
-      emitLaunch({ state: "error", message: "Игра не установлена" });
       if (generation === launchGeneration) launchInProgress = false;
+      emitLaunch({ state: "error", message: "Игра не установлена" });
       return;
     }
 
     let java = await detectJava(instance?.javaPath ?? state.settings.javaPath);
-    if (!java?.valid) java = await installJava21();
+    if (!java?.valid) java = await installRequiredJava();
     if (cancelled()) return;
     if (!java?.valid) {
       emitLaunch({
@@ -1066,6 +781,7 @@ export async function launchGame(account: StoredAccount): Promise<void> {
       });
     }
     if (cancelled()) return;
+    await ensureFabricProfile(folder);
     let resolved = await Version.parse(folder, id);
     emitLaunch({ state: "launching", message: "Проверяем файлы игры" });
     resolved = await repairLaunchFiles(
@@ -1078,8 +794,9 @@ export async function launchGame(account: StoredAccount): Promise<void> {
     // Lightweight damage (partial/corrupt Modrinth archives) is repaired
     // silently before Fabric sees it. The launch button keeps one calm status
     // instead of exposing technical recovery work to the player.
-    await repairInstalledMods();
-    await ensureRoyaleClientHealthy(dir);
+    await installBundledClient(dir);
+    await installProject(FABRIC_API_PROJECT, "Fabric API");
+    await repairInstalledMods(undefined, java.majorVersion);
     if (cancelled()) return;
     const automaticMax = Math.min(
       8192,
@@ -1106,7 +823,7 @@ export async function launchGame(account: StoredAccount): Promise<void> {
     const environment = environmentFromText(
       state.settings.environmentVariables,
     );
-    if (state.settings.devMode) environment.ROYALE_LAUNCHER_DEV_MODE = "1";
+    if (state.settings.devMode) environment.VELA_LAUNCHER_DEV_MODE = "1";
     if (state.settings.gpuDedicated && state.settings.gpuProfile !== "power") {
       environment.SHIM_MCCOMPAT = "0x800000001";
       environment.__NV_PRIME_RENDER_OFFLOAD = "1";
@@ -1128,8 +845,9 @@ export async function launchGame(account: StoredAccount): Promise<void> {
         ? [LaunchPrecheck.checkVersion, LaunchPrecheck.checkLibraries]
         : undefined;
 
+    const appearanceManifest = await syncAppearanceManifest(state.settings.storagePath, state.accounts);
     const developerJvmArgs = state.settings.devMode
-      ? ["-Droyale.launcher.devMode=true"]
+      ? ["-Dvela.launcher.devMode=true"]
       : [];
     const process = await launch({
       gamePath: dir,
@@ -1138,7 +856,7 @@ export async function launchGame(account: StoredAccount): Promise<void> {
       version: resolved,
       minMemory,
       maxMemory,
-      extraJVMArgs: [...splitArgs(state.settings.jvmArgs), ...developerJvmArgs],
+      extraJVMArgs: [...splitArgs(state.settings.jvmArgs), ...developerJvmArgs, `-Dvela.appearance.manifest=${appearanceManifest}`],
       extraMCArgs: splitArgs(state.settings.minecraftArgs),
       extraExecOption: { env: environment, windowsHide: true },
       prechecks,
@@ -1171,7 +889,7 @@ export async function launchGame(account: StoredAccount): Promise<void> {
       await fs.mkdir(logDirectory, { recursive: true });
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
       logStream = createWriteStream(
-        join(logDirectory, `royale-launch-${timestamp}.log`),
+        join(logDirectory, `vela-launch-${timestamp}.log`),
         { flags: "a" },
       );
       logStream.write(
@@ -1200,6 +918,9 @@ export async function launchGame(account: StoredAccount): Promise<void> {
       if (cancelled()) return;
       if (minecraftWindowReady) return;
       minecraftWindowReady = true;
+      runningProcesses.add(process);
+      if (activeMinecraftProcess === process) activeMinecraftProcess = null;
+      if (generation === launchGeneration) launchInProgress = false;
       emitLaunch({ state: "running", message: "Игра запущена" });
       void setDiscordActivity({
         details: "Играет в Vela",
@@ -1212,6 +933,7 @@ export async function launchGame(account: StoredAccount): Promise<void> {
       }
     });
     watcher.on("error", (error) => {
+      runningProcesses.delete(process);
       if (activeMinecraftProcess === process) activeMinecraftProcess = null;
       if (cancelled()) return;
       if (generation === launchGeneration) launchInProgress = false;
@@ -1225,6 +947,7 @@ export async function launchGame(account: StoredAccount): Promise<void> {
     watcher.on(
       "minecraft-exit",
       ({ code, crashReport, crashReportLocation }) => {
+        runningProcesses.delete(process);
         if (activeMinecraftProcess === process) activeMinecraftProcess = null;
         if (generation === launchGeneration) launchInProgress = false;
         logStream?.end(
@@ -1240,10 +963,7 @@ export async function launchGame(account: StoredAccount): Promise<void> {
           0,
           Math.round((Date.now() - started) / 60_000),
         );
-        void updateStats({
-          lastPlayed: Date.now(),
-          playtimeMinutes: state.stats.playtimeMinutes + minutes,
-        });
+        void recordPlaytime(minutes);
         if (launcherWindow && (launcherHidden || !launcherWindow.isVisible())) {
           launcherWindow.show();
           launcherWindow.focus();
@@ -1266,7 +986,6 @@ export async function launchGame(account: StoredAccount): Promise<void> {
         );
       },
     );
-    if (generation === launchGeneration) launchInProgress = false;
   } catch (error) {
     if (generation === launchGeneration) launchInProgress = false;
     if (cancelled()) return;
@@ -1280,18 +999,26 @@ export async function launchGame(account: StoredAccount): Promise<void> {
         error instanceof Error ? error.stack || error.message : String(error),
     });
     await setDiscordActivity({ details: "В главном меню" });
+  } finally {
+    if (!activeMinecraftProcess && generation === launchGeneration) {
+      launchInProgress = false;
+      if (cancelled()) emitLaunch({ state: "exited", code: 0 });
+    }
+    cancelledGenerations.delete(generation);
   }
 }
 
 export async function cancelLaunch(): Promise<boolean> {
-  if (!launchInProgress && !activeMinecraftProcess) return false;
-  const process = activeMinecraftProcess;
-  launchGeneration += 1;
-  launchInProgress = false;
-  activeMinecraftProcess = null;
-  if (process && !process.killed) {
-    process.kill();
+  if (!launchInProgress) return false;
+  cancelledGenerations.add(launchGeneration);
+  const pending = activeMinecraftProcess;
+  if (pending && !pending.killed) {
+    pending.kill();
+    activeMinecraftProcess = null;
+    launchInProgress = false;
+    emitLaunch({ state: "exited", code: 0 });
+  } else {
+    emitLaunch({ state: "launching", message: "Ожидаем завершения текущей проверки…" });
   }
-  emitLaunch({ state: "exited", code: 0 });
   return true;
 }

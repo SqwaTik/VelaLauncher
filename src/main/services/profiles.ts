@@ -23,7 +23,7 @@ export async function resolveMinecraftProfile(
     {
       headers: {
         Accept: "application/json",
-        "User-Agent": "RoyaleLauncher/0.1",
+        "User-Agent": "VelaLauncher/0.1.5",
       },
     },
   );

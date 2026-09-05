@@ -27,7 +27,7 @@ import {
   removeInstance,
 } from "./store";
 
-const USER_AGENT = "SqwaTik/RoyaleLauncher (royale-launcher)";
+const USER_AGENT = "SqwaTik/VelaLauncher (vela-launcher)";
 const DOWNLOAD_HOSTS = new Set([
   "cdn.modrinth.com",
   "github.com",

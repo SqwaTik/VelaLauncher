@@ -37,6 +37,7 @@ function addOffline(): void {
   showAddAccount.value = false;
 }
 function providerName(type?: string): string {
+  if (type === "microsoft") return "Microsoft";
   if (type === "ely") return "Ely.by";
   if (type === "littleskin") return "LittleSkin";
   return type
@@ -119,9 +120,9 @@ function confirmRemove(dontAsk: boolean): void {
         <p>
           {{
             tr(
-              "Локальные профили и полноценная 3D-студия скинов.",
-              "Local profiles and a complete 3D skin studio.",
-              "Perfiles locales y un estudio 3D de skins completo.",
+              "Профили и полноценная 3D-студия скинов.",
+              "Profiles and a complete 3D skin studio.",
+              "Perfiles y un estudio 3D de skins completo.",
             )
           }}
         </p>
@@ -285,19 +286,12 @@ function confirmRemove(dontAsk: boolean): void {
                 :class="{
                   active: !account.activeCustomCape && cape.state === 'ACTIVE',
                 }"
-                :disabled="account.active?.type !== 'microsoft'"
                 :title="
-                  account.active?.type === 'microsoft'
-                    ? tr(
-                        'Выбрать официальный плащ',
-                        'Select official cape',
-                        'Elegir capa oficial',
-                      )
-                    : tr(
-                        'Плащ этого сервиса доступен для просмотра',
-                        'This service cape is available for preview',
-                        'La capa de este servicio está disponible como vista previa',
-                      )
+                  tr(
+                    'Плащ профиля',
+                    'Profile cape',
+                    'Capa del perfil',
+                  )
                 "
                 @click="account.selectCape(cape.id)"
               >
@@ -310,12 +304,13 @@ function confirmRemove(dontAsk: boolean): void {
                 :class="{ active: account.activeCustomCape?.id === cape.id }"
                 :title="
                   tr(
-                    'Нажмите, чтобы выбрать или заменить. ПКМ — удалить',
-                    'Click to select or replace. Right-click to remove',
-                    'Clic para elegir o reemplazar. Clic derecho para eliminar',
+                    'Нажмите, чтобы надеть. Двойной клик — заменить, ПКМ — удалить',
+                    'Click to equip. Double-click to replace, right-click to remove',
+                    'Clic para equipar. Doble clic para reemplazar, clic derecho para eliminar',
                   )
                 "
-                @click="account.editCustomCape(cape.id)"
+                @click="account.selectCustomCape(cape.id)"
+                @dblclick="account.editCustomCape(cape.id)"
                 @contextmenu.prevent="account.removeCustomCape(cape.id)"
               >
                 <img :src="cape.dataUrl" :alt="cape.name" />

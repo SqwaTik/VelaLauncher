@@ -7,6 +7,7 @@ import { useAccountStore } from "@/stores/account";
 import { useInstancesStore } from "@/stores/instances";
 import { useModsStore } from "@/stores/mods";
 import { useLocale } from "@/composables/useLocale";
+import { GAME } from "@shared/constants";
 import generatedLogo from "@/assets/images/vela-logo.png";
 import defaultInstanceIcon from "@/assets/images/minecraft-instance-default.png";
 
@@ -22,6 +23,7 @@ const editorOpen = ref(false);
 const editingId = ref<string | null>(null);
 const deleteId = ref<string | null>(null);
 const draftName = ref("");
+const draftVersion = ref(GAME.minecraftVersion);
 const draftIconDataUrl = ref<string | null>(null);
 const draftJavaPath = ref<string | null>(null);
 const javaMenuOpen = ref(false);
@@ -111,6 +113,7 @@ function openInstanceMenu(event: MouseEvent, id: string): void {
 function beginCreate(): void {
   if (!instances.canCreate) return;
   draftName.value = `Экземпляр ${instances.instances.length + 1}`;
+  draftVersion.value = GAME.minecraftVersion;
   draftIconDataUrl.value = null;
   editingId.value = null;
   createOpen.value = true;
@@ -131,7 +134,11 @@ function beginEdit(id: string): void {
 
 async function createInstance(): Promise<void> {
   if (!draftName.value.trim()) return;
-  const created = await instances.create(draftName.value);
+  const created = await instances.create(
+    draftName.value,
+    "created",
+    draftVersion.value,
+  );
   if (created) {
     if (draftIconDataUrl.value) {
       await instances.update(created.id, {
@@ -273,13 +280,7 @@ onBeforeUnmount(() => {
           </span>
           <span class="instance-copy"
             ><b>{{ instance.name }}</b
-            ><small>{{
-              instance.source === "imported"
-                ? "Импортированная сборка"
-                : instance.source === "default"
-                  ? "Основной экземпляр"
-                  : "Локальный экземпляр"
-            }}</small></span
+            ><small>Minecraft {{ instance.minecraftVersion }}</small></span
           >
           <span
             class="instance-more"
@@ -441,9 +442,24 @@ onBeforeUnmount(() => {
                 autofocus
                 @keyup.enter="createInstance"
             /></label>
+            <label class="instance-version-field">
+              <span>Версия Minecraft</span>
+              <span class="instance-version-select">
+                <select v-model="draftVersion">
+                  <option
+                    v-for="version in GAME.supportedMinecraftVersions"
+                    :key="version"
+                    :value="version"
+                  >
+                    Minecraft {{ version }}
+                  </option>
+                </select>
+                <Icon name="chevron" :size="16" />
+              </span>
+            </label>
             <p class="instance-help">
               У экземпляра будут собственные моды, настройки и файлы игры.
-              Версия Vela настраивается автоматически.
+              Пока поддерживается стабильная версия Minecraft 26.2.
             </p>
             <footer>
               <button class="import-compact" @click="importPack">
@@ -503,7 +519,7 @@ onBeforeUnmount(() => {
                   }}</b
                   ><small>{{
                     draftJavaPath ||
-                    "Лаунчер найдёт Java 21+ и проверит её перед запуском"
+                    `Лаунчер найдёт Java ${GAME.javaMajor}+ и проверит её перед запуском`
                   }}</small></span
                 ><Icon name="chevron" :size="16" />
               </button>
@@ -517,7 +533,7 @@ onBeforeUnmount(() => {
                   >
                     <Icon name="sparkles" :size="16" /><span
                       ><b>Автоматически</b
-                      ><small>Поиск Java 21+ перед запуском</small></span
+                      ><small>Поиск Java {{ GAME.javaMajor }}+ перед запуском</small></span
                     >
                   </button>
                   <button @click="pickInstanceJava">
@@ -1002,7 +1018,7 @@ onBeforeUnmount(() => {
   padding: 6px;
   border-radius: 14px;
   color: var(--text-1);
-  background: rgba(20, 25, 22, 0.98);
+  background: rgba(17, 19, 29, 0.98);
   border: 1px solid var(--hairline-strong);
   box-shadow: 0 20px 70px rgba(0, 0, 0, 0.55);
   backdrop-filter: blur(18px);
@@ -1067,7 +1083,7 @@ onBeforeUnmount(() => {
   border-radius: 20px;
   color: var(--text-1);
   background:
-    linear-gradient(145deg, rgba(26, 34, 29, 0.98), rgba(16, 21, 18, 0.98));
+    linear-gradient(145deg, rgba(27, 30, 45, 0.98), rgba(14, 16, 25, 0.98));
   border: 1px solid var(--hairline-strong);
   box-shadow: 0 30px 110px rgba(0, 0, 0, 0.58);
 }
@@ -1122,18 +1138,21 @@ onBeforeUnmount(() => {
   background: var(--surface-4);
   transform: rotate(5deg);
 }
-.instance-name-field {
+.instance-name-field,
+.instance-version-field {
   margin-top: 20px;
   display: grid;
   gap: 7px;
 }
-.instance-name-field span,
+.instance-name-field > span,
+.instance-version-field > span:first-child,
 .shared-folders h3 {
   color: var(--text-2);
   font-size: 10px;
   font-weight: 700;
 }
-.instance-name-field input {
+.instance-name-field input,
+.instance-version-select {
   height: 48px;
   padding: 0 14px;
   border-radius: 12px;
@@ -1145,9 +1164,35 @@ onBeforeUnmount(() => {
     border-color 0.16s,
     box-shadow 0.16s;
 }
-.instance-name-field input:focus {
+.instance-name-field input:focus,
+.instance-version-select:focus-within {
   border-color: var(--green-line);
   box-shadow: 0 0 0 3px rgba(118, 104, 255, 0.1);
+}
+.instance-version-select {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding-right: 12px;
+}
+.instance-version-select select {
+  width: 100%;
+  height: 100%;
+  padding: 0 42px 0 14px;
+  border: 0;
+  outline: 0;
+  appearance: none;
+  color: var(--text-0);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+.instance-version-select svg {
+  position: absolute;
+  right: 14px;
+  pointer-events: none;
+  color: var(--green);
+  transform: rotate(90deg);
 }
 .instance-help {
   margin-top: 10px;
@@ -1223,7 +1268,7 @@ onBeforeUnmount(() => {
   z-index: 6;
   padding: 5px;
   border-radius: 13px;
-  background: rgba(20, 26, 22, 0.99);
+  background: rgba(17, 19, 29, 0.99);
   border: 1px solid var(--hairline-strong);
   box-shadow: 0 18px 55px rgba(0, 0, 0, 0.5);
 }

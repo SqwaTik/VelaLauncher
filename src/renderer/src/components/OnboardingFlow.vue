@@ -225,7 +225,7 @@ async function finish(): Promise<void> {
                       : `Java ${GAME.javaMajor} не найдена`
                   }}</b
                   ><small>{{
-                    settings.java?.path || `.royale/jre/java${GAME.javaMajor}`
+                    settings.java?.path || `.vela/jre/java${GAME.javaMajor}`
                   }}</small>
                 </div>
               </div>

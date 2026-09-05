@@ -5,6 +5,7 @@ dist/
 *.tsbuildinfo
 .DS_Store
 .vite/
+.verification/
 .env
 .env.*
 !.env.example

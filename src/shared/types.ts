@@ -16,11 +16,16 @@ export interface StoredAccount {
   uuid: string;
   type: AccountType;
   skinModel: SkinModel;
-  /** Locally edited 64x64 PNG used by the launcher preview. */
+  /** Locally edited PNG used by the launcher preview and Vela Client. */
   skinDataUrl?: string;
-  /** Local cape wardrobe used by the Royale preview/client integration. */
+  /** Cached 2D head composed from the local skin for launcher avatars. */
+  skinHeadDataUrl?: string;
+  /** Local cape wardrobe used by the launcher preview and Vela Client. */
   customCapes?: CustomCape[];
   activeCustomCapeId?: string | null;
+  capeHidden?: boolean;
+  activeProviderCapeId?: string | null;
+  providerCapeDataUrl?: string;
   /** MS access token, if any (never rendered). */
   accessToken?: string;
   refreshToken?: string;
@@ -49,7 +54,8 @@ export interface InstanceSharedFolders {
 export interface GameInstance {
   id: string;
   name: string;
-  /** Empty only for the original Royale Master workspace at storagePath root. */
+  minecraftVersion: string;
+  /** Empty only for the original Vela workspace at storagePath root. */
   directory: string;
   source: InstanceSource;
   iconDataUrl?: string | null;
@@ -129,7 +135,7 @@ export interface LauncherStats {
   playtimeMinutes: number;
   lastPlayed: number | null;
   installed: boolean;
-  /** Git commit from which the installed Royale client jar was produced. */
+  /** Git commit from which the installed Vela client jar was produced. */
   installedCommitSha?: string | null;
   installedClientVersion?: string | null;
   lastUpdateCheck?: number | null;
@@ -232,6 +238,8 @@ export interface LaunchStatus {
   state: "launching" | "running" | "exited" | "error" | "crashed";
   message?: string;
   code?: number;
+  runningCount?: number;
+  preparing?: boolean;
   crashReport?: string;
   crashReportLocation?: string;
 }

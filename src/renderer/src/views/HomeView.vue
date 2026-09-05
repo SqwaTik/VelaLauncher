@@ -35,6 +35,24 @@ let logoVelocity = { x: 0, y: 0 };
 let logoInertiaFrame = 0;
 let carouselTimer: ReturnType<typeof setInterval> | null = null;
 let contentRefreshTimer: ReturnType<typeof setInterval> | null = null;
+const runningMenuOpen = ref(false);
+let runningMenuTimer: ReturnType<typeof setTimeout> | null = null;
+function showRunningMenu(): void {
+  if (launcher.state !== "running" || runningMenuTimer) return;
+  runningMenuTimer = setTimeout(() => {
+    runningMenuTimer = null;
+    if (launcher.state === "running") runningMenuOpen.value = true;
+  }, 1000);
+}
+function hideRunningMenu(): void {
+  if (runningMenuTimer) clearTimeout(runningMenuTimer);
+  runningMenuTimer = null;
+  runningMenuOpen.value = false;
+}
+function launchAnother(): void {
+  hideRunningMenu();
+  void launcher.play();
+}
 
 const busy = computed(
   () =>
@@ -220,6 +238,7 @@ onMounted(() => {
   );
 });
 onBeforeUnmount(() => {
+  hideRunningMenu();
   if (carouselTimer) clearInterval(carouselTimer);
   if (contentRefreshTimer) clearInterval(contentRefreshTimer);
   cancelAnimationFrame(logoInertiaFrame);
@@ -620,7 +639,12 @@ onBeforeUnmount(() => {
           }}</span></RouterLink
         >
       </div>
-      <div class="launch-zone">
+      <div class="launch-zone" @mouseleave="hideRunningMenu" @keydown.esc="hideRunningMenu">
+        <Transition name="fade">
+          <div v-if="runningMenuOpen && launcher.state === 'running'" class="running-context" role="menu">
+            <button role="menuitem" @click="launchAnother"><Icon name="play" :size="16" />Запустить</button>
+          </div>
+        </Transition>
         <div
           class="launch-pill"
           :class="{
@@ -659,6 +683,8 @@ onBeforeUnmount(() => {
           </button>
           <button
             class="launch-settings"
+            @focus="showRunningMenu"
+            @mouseenter="showRunningMenu"
             :disabled="launcher.transportBusy"
             :title="
               ['downloading', 'paused'].includes(launcher.state)
@@ -1170,6 +1196,7 @@ onBeforeUnmount(() => {
   z-index: 2;
 }
 .launch-zone {
+  position: relative;
   width: 286px;
   display: flex;
   flex-direction: column;
@@ -1217,6 +1244,21 @@ onBeforeUnmount(() => {
   background: var(--green);
   box-shadow: 0 0 8px rgba(118, 104, 255, 0.62);
 }
+.running-context {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  min-width: 184px;
+  padding: 6px;
+  border: 1px solid #39334f;
+  border-radius: 12px;
+  background: #16131f;
+  box-shadow: 0 12px 32px #0007;
+  z-index: 30;
+}
+.running-context::after { content: ""; position: absolute; left: 0; right: 0; top: 100%; height: 10px; }
+.running-context button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 11px 14px; border: 0; border-radius: 8px; color: #f2efff; background: transparent; cursor: pointer; }
+.running-context button:hover, .running-context button:focus-visible { background: #7668ff30; outline: none; }
 .launch-pill {
   position: relative;
   width: 100%;

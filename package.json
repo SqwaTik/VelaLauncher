@@ -1,6 +1,6 @@
 {
   "name": "vela-launcher",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Vela Launcher — a fast, beautiful Minecraft launcher",
   "author": "SqwaTik",
   "license": "MIT",
@@ -69,6 +69,18 @@
       {
         "from": "build/icon.ico",
         "to": "icon.ico"
+      },
+      {
+        "from": "build/vela-client.jar",
+        "to": "vela-client.jar"
+      },
+      {
+        "from": "build/ias.jar",
+        "to": "ias.jar"
+      },
+      {
+        "from": "THIRD_PARTY_NOTICES.md",
+        "to": "THIRD_PARTY_NOTICES.md"
       }
     ],
     "win": {

@@ -97,7 +97,7 @@ async function streamMedia(
   }
 
   const nodeStream = createReadStream(requestedPath, { start, end });
-  const body = Readable.toWeb(nodeStream) as unknown as BodyInit;
+  const body = Readable.toWeb(nodeStream) as unknown as ConstructorParameters<typeof Response>[0];
   const headers: Record<string, string> = {
     "Accept-Ranges": "bytes",
     "Cache-Control": "no-store",

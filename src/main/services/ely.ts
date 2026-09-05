@@ -16,7 +16,7 @@ async function request<T>(path: string, body: unknown): Promise<T> {
     headers: {
       "Content-Type": "application/json",
       Accept: "application/json",
-      "User-Agent": "RoyaleLauncher/0.1",
+      "User-Agent": "VelaLauncher/0.1.5",
     },
     body: JSON.stringify(body),
   });

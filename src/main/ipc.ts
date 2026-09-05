@@ -21,7 +21,7 @@ import {
   instanceDir,
   duplicateInstance,
 } from "./services/store";
-import { detectJava, installJava21 } from "./services/java";
+import { detectJava, installRequiredJava } from "./services/java";
 import {
   installGame,
   launchGame,
@@ -31,6 +31,7 @@ import {
   cancelInstall,
   cancelLaunch,
   checkClientUpdate,
+  gameOperationBusy,
 } from "./services/game";
 import { loginEly, refreshEly } from "./services/ely";
 import { loginLittleSkin, refreshLittleSkin } from "./services/littleskin";
@@ -38,6 +39,7 @@ import { resolveMinecraftProfile } from "./services/profiles";
 import * as modrinth from "./services/modrinth";
 import * as modpacks from "./services/modpacks";
 import * as appearance from "./services/appearance";
+import { decodeAppearancePng } from "./services/appearance-export";
 import { contentSummary, listScreenshots } from "./services/content";
 import { setDiscordActivity, syncDiscordSetting } from "./services/discord";
 import {
@@ -168,6 +170,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     return state;
   });
   ipcMain.handle(IPC.settingsSave, async (_e, settings: AppSettings) => {
+    if (gameOperationBusy()) throw new Error("Дождитесь завершения подготовки игры");
     const result = await saveSettings(settings);
     await syncDiscordSetting();
     return result;
@@ -179,8 +182,10 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   );
   ipcMain.handle(
     IPC.instancesSave,
-    (_e, instances: GameInstance[], activeId: string) =>
-      saveInstances(instances, activeId),
+    (_e, instances: GameInstance[], activeId: string) => {
+      if (gameOperationBusy()) throw new Error("Дождитесь завершения подготовки игры");
+      return saveInstances(instances, activeId);
+    },
   );
   ipcMain.handle(IPC.instanceReveal, async (_e, id: string) => {
     const path = await instanceDir(id);
@@ -202,7 +207,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.javaDetect, async (_e, preferred?: string | null) =>
     detectJava(preferred),
   );
-  ipcMain.handle(IPC.javaInstall, () => installJava21());
+  ipcMain.handle(IPC.javaInstall, () => installRequiredJava());
 
   ipcMain.handle(IPC.authElyLogin, (_e, input: ElyLoginInput) =>
     loginEly(input),
@@ -233,7 +238,10 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       properties: ["openFile"],
       filters: [{ name: "Minecraft skin", extensions: ["png"] }],
     });
-    return result.canceled ? null : readImageDataUrl(result.filePaths[0]);
+    if (result.canceled) return null;
+    const dataUrl = await readImageDataUrl(result.filePaths[0]);
+    decodeAppearancePng(dataUrl, "skin");
+    return dataUrl;
   });
   ipcMain.handle(IPC.appearancePickCape, async () => {
     const window = getWindow();
@@ -244,15 +252,15 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     });
     if (result.canceled) return null;
     const bytes = await fs.readFile(result.filePaths[0]);
-    if (bytes.length > 5 * 1024 * 1024)
-      throw new Error("Плащ слишком большой (максимум 5 МБ).");
-    return `data:image/png;base64,${bytes.toString("base64")}`;
+    const dataUrl = `data:image/png;base64,${bytes.toString("base64")}`;
+    decodeAppearancePng(dataUrl, "cape");
+    return dataUrl;
   });
   ipcMain.handle(IPC.appearanceExportSkin, async (_event, dataUrl: string) => {
     const window = getWindow();
     if (!window) return false;
     const result = await dialog.showSaveDialog(window, {
-      defaultPath: "royale-skin.png",
+      defaultPath: "vela-skin.png",
       filters: [{ name: "PNG", extensions: ["png"] }],
     });
     if (result.canceled || !result.filePath) return false;

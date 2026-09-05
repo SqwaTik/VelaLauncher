@@ -1,13 +1,13 @@
 /**
  * Shared constants — single source of truth for both main and renderer.
- * Version data mirrors the Royale Master client repo (gradle.properties / fabric.mod.json).
+ * Supported game stack shared by installation, instances and the renderer.
  */
 
 export const BRAND = {
   name: "VELA",
   fullName: "Vela",
   tagline: "Клиент для Minecraft",
-  repo: "https://github.com/SqwaTik/Royale-Master",
+  repo: "https://github.com/SqwaTik/VelaLauncher",
 } as const;
 
 /** Public Discord application ID. Rich Presence never needs a client secret. */
@@ -15,14 +15,12 @@ export const DISCORD_APP_ID = "1144713648120549536";
 
 /** Target game + loader versions the launcher installs. */
 export const GAME = {
-  /** Minecraft version the Royale client is built for. */
-  minecraftVersion: "1.21.11",
-  yarnMappings: "1.21.11+build.4",
-  fabricLoader: "0.18.4",
-  fabricApi: "0.141.5+1.21.11",
-  javaMajor: 21,
-  /** Royale client mod version. */
-  clientVersion: "1.0.13",
+  minecraftVersion: "26.2",
+  supportedMinecraftVersions: ["26.2"] as const,
+  fabricLoader: "0.19.5",
+  fabricApi: "0.159.0+26.2",
+  javaMajor: 25,
+  clientVersion: "0.1.1",
   loader: "fabric" as const,
 } as const;
 

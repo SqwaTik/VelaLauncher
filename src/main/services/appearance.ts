@@ -4,38 +4,49 @@ import type {
   SkinModel,
   StoredAccount,
 } from "../../shared/types";
+import { decodeAppearancePng } from "./appearance-export";
 
 const mojang = new MojangClient({ fetch: globalThis.fetch as never });
 
-function requireMicrosoft(account: StoredAccount): string {
-  if (account.type !== "microsoft" || !account.accessToken) {
-    throw new Error(
-      "Загрузка скинов и управление плащами доступны для Microsoft-аккаунта.",
-    );
-  }
-  return account.accessToken;
-}
-
-async function imageDataUrl(url: string): Promise<string | null> {
+async function imageDataUrl(url: string, kind: "skin" | "cape" = "skin"): Promise<string | null> {
   try {
-    const response = await fetch(url);
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return null;
+    if (parsed.protocol === "http:") parsed.protocol = "https:";
+    const response = await fetch(parsed, { signal: AbortSignal.timeout(12_000) });
     if (!response.ok) return null;
+    if (Number(response.headers.get("content-length")) > 4 * 1024 * 1024) return null;
     const bytes = Buffer.from(await response.arrayBuffer());
-    const contentType = response.headers.get("content-type") || "image/png";
-    return `data:${contentType};base64,${bytes.toString("base64")}`;
+    const result = `data:image/png;base64,${bytes.toString("base64")}`;
+    decodeAppearancePng(result, kind);
+    return result;
   } catch {
     return null;
   }
 }
 
 function decodeDataUrl(dataUrl: string): Buffer {
-  const match = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
-  if (!match) throw new Error("Редактор может загрузить только PNG-скин.");
-  const buffer = Buffer.from(match[1], "base64");
-  if (!buffer.length || buffer.length > 4 * 1024 * 1024) {
-    throw new Error("Некорректный или слишком большой PNG-файл.");
-  }
-  return buffer;
+  return decodeAppearancePng(dataUrl, "skin");
+}
+
+type ProviderTextures = {
+  SKIN?: { url: string; metadata?: { model?: string } };
+  CAPE?: { url: string };
+};
+
+async function fromTextures(textures: ProviderTextures, provider: string): Promise<MinecraftAppearance> {
+  const skin = textures.SKIN;
+  const cape = textures.CAPE;
+  const [skinDataUrl, capeDataUrl] = await Promise.all([
+    skin ? imageDataUrl(skin.url) : null,
+    cape ? imageDataUrl(cape.url, "cape") : null,
+  ]);
+  return {
+    skinDataUrl,
+    skins: skin ? [{ id: skin.url, state: "ACTIVE", url: skin.url,
+      variant: skin.metadata?.model === "slim" ? "SLIM" : "CLASSIC" }] : [],
+    capes: cape && capeDataUrl ? [{ id: cape.url, state: "ACTIVE", url: capeDataUrl, alias: provider }] : [],
+  };
 }
 
 async function littleSkinAppearance(
@@ -44,6 +55,7 @@ async function littleSkinAppearance(
   const uuid = account.uuid.replace(/-/g, "");
   const response = await fetch(
     `https://littleskin.cn/api/yggdrasil/sessionserver/session/minecraft/profile/${encodeURIComponent(uuid)}`,
+    { signal: AbortSignal.timeout(12_000) },
   );
   if (!response.ok)
     throw new Error(`LittleSkin не вернул профиль (${response.status})`);
@@ -62,30 +74,21 @@ async function littleSkinAppearance(
       CAPE?: { url: string };
     };
   };
-  const skin = textures.textures?.SKIN;
-  const cape = textures.textures?.CAPE;
-  return {
-    skinDataUrl: skin ? await imageDataUrl(skin.url) : null,
-    skins: skin
-      ? [
-          {
-            id: skin.url,
-            state: "ACTIVE",
-            url: skin.url,
-            variant: skin.metadata?.model === "slim" ? "SLIM" : "CLASSIC",
-          },
-        ]
-      : [],
-    capes: cape
-      ? [{ id: cape.url, state: "ACTIVE", url: cape.url, alias: "LittleSkin" }]
-      : [],
-  };
+  return fromTextures(textures.textures ?? {}, "LittleSkin");
 }
 
 export async function getAppearance(
   account: StoredAccount,
 ): Promise<MinecraftAppearance> {
   if (account.type === "littleskin") return littleSkinAppearance(account);
+  if (account.type === "ely") {
+    const response = await fetch(`https://skinsystem.ely.by/textures/${encodeURIComponent(account.username)}`, {
+      signal: AbortSignal.timeout(12_000),
+    });
+    if (response.status === 204 || response.status === 404) return { skinDataUrl: null, skins: [], capes: [] };
+    if (!response.ok) throw new Error(`Ely.by не вернул внешний вид (${response.status})`);
+    return fromTextures(await response.json() as ProviderTextures, "Ely.by");
+  }
   if (account.type !== "microsoft" || !account.accessToken) {
     const key = encodeURIComponent(account.username);
     return {
@@ -101,7 +104,7 @@ export async function getAppearance(
   return {
     skinDataUrl: active ? await imageDataUrl(active.url) : null,
     skins: profile.skins,
-    capes: profile.capes,
+    capes: (await Promise.all(profile.capes.map(async cape => ({ ...cape, url: await imageDataUrl(cape.url, "cape") })))).filter((cape): cape is typeof profile.capes[number] => Boolean(cape.url)),
   };
 }
 
@@ -110,16 +113,13 @@ export async function uploadSkin(
   dataUrl: string,
   model: SkinModel,
 ): Promise<MinecraftAppearance> {
-  const token = requireMicrosoft(account);
-  await mojang.setSkin("royale-skin.png", decodeDataUrl(dataUrl), model, token);
-  return getAppearance({ ...account, skinModel: model });
+  decodeDataUrl(dataUrl);
+  return { skinDataUrl: dataUrl, skins: [{ id: "local", url: dataUrl, state: "ACTIVE", variant: model === "slim" ? "SLIM" : "CLASSIC" }], capes: [] };
 }
 
 export async function resetSkin(
   account: StoredAccount,
 ): Promise<MinecraftAppearance> {
-  const token = requireMicrosoft(account);
-  await mojang.resetSkin(token);
   return getAppearance(account);
 }
 
@@ -127,17 +127,15 @@ export async function showCape(
   account: StoredAccount,
   capeId: string,
 ): Promise<MinecraftAppearance> {
-  const token = requireMicrosoft(account);
-  await mojang.showCape(capeId, token);
-  return getAppearance(account);
+  const result = await getAppearance(account);
+  return { ...result, capes: result.capes.map(cape => ({ ...cape, state: cape.id === capeId ? "ACTIVE" : "INACTIVE" })) };
 }
 
 export async function hideCape(
   account: StoredAccount,
 ): Promise<MinecraftAppearance> {
-  const token = requireMicrosoft(account);
-  await mojang.hideCape(token);
-  return getAppearance(account);
+  const result = await getAppearance(account);
+  return { ...result, capes: result.capes.map(cape => ({ ...cape, state: "INACTIVE" })) };
 }
 
 export function skinBufferFromDataUrl(dataUrl: string): Buffer {

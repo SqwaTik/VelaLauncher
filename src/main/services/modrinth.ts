@@ -23,7 +23,7 @@ import type {
 } from "../../shared/types";
 import { modsDir, resourcePacksDir, shaderPacksDir } from "./store";
 
-const UA = "SqwaTik/RoyaleLauncher (royale-launcher)";
+const UA = "SqwaTik/VelaLauncher (vela-launcher)";
 const responseCache = new Map<string, { expires: number; value: unknown }>();
 
 async function fetchWithRetry(
@@ -34,7 +34,6 @@ async function fetchWithRetry(
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       const response = await fetch(input, {
-        cache: "no-store",
         headers: {
           "User-Agent": UA,
           "Accept-Encoding": "identity",
@@ -379,7 +378,7 @@ interface ModHealthCache {
   checkedAt: number;
 }
 
-async function modSetFingerprint(dir: string): Promise<string> {
+async function modSetFingerprint(dir: string, javaMajor = GAME.javaMajor as number): Promise<string> {
   if (!existsSync(dir)) return createHash("sha1").update("empty").digest("hex");
   const entries = await fs.readdir(dir, { withFileTypes: true });
   const files = entries
@@ -392,7 +391,7 @@ async function modSetFingerprint(dir: string): Promise<string> {
       return `${filename}\0${stat.size}\0${stat.mtimeMs}`;
     }),
   );
-  return createHash("sha1").update(rows.join("\n")).digest("hex");
+  return createHash("sha1").update([GAME.minecraftVersion, GAME.fabricLoader, javaMajor, ...rows].join("\n")).digest("hex");
 }
 
 async function readModHealth(dir: string): Promise<ModHealthCache | null> {
@@ -405,14 +404,14 @@ async function readModHealth(dir: string): Promise<ModHealthCache | null> {
   }
 }
 
-async function writeModHealth(dir: string): Promise<void> {
+async function writeModHealth(dir: string, javaMajor: number): Promise<void> {
   const file = join(dir, ".royale-mod-health.json");
   const temporary = `${file}.tmp`;
   await fs.writeFile(
     temporary,
     JSON.stringify(
       {
-        fingerprint: await modSetFingerprint(dir),
+        fingerprint: await modSetFingerprint(dir, javaMajor),
         checkedAt: Date.now(),
       } satisfies ModHealthCache,
       null,
@@ -441,7 +440,7 @@ async function sha1File(path: string): Promise<string> {
   return digestFile(path, "sha1");
 }
 
-async function readArchiveText(
+export async function readArchiveText(
   path: string,
   requestedEntry: string,
 ): Promise<string | null> {
@@ -616,6 +615,7 @@ async function fabricDescriptors(): Promise<FabricModDescriptor[]> {
 
 function fabricCompatibilityIssues(
   descriptors: FabricModDescriptor[],
+  javaMajor = GAME.javaMajor as number,
 ): FabricCompatibilityIssue[] {
   const byId = new Map<string, FabricModDescriptor>();
   for (const descriptor of descriptors) {
@@ -625,7 +625,7 @@ function fabricCompatibilityIssues(
   const builtins = new Map<string, string>([
     ["minecraft", GAME.minecraftVersion],
     ["fabricloader", GAME.fabricLoader],
-    ["java", String(GAME.javaMajor)],
+    ["java", String(javaMajor)],
   ]);
   const hasFabricApi = byId.has("fabric-api");
   const issues: FabricCompatibilityIssue[] = [];
@@ -933,9 +933,10 @@ export async function installMod(
 
 export async function repairInstalledMods(
   onStatus?: (message: string) => void,
+  javaMajor = GAME.javaMajor as number,
 ): Promise<{ repaired: string[]; disabled: string[] }> {
   const dir = await modsDir();
-  const initialFingerprint = await modSetFingerprint(dir);
+  const initialFingerprint = await modSetFingerprint(dir, javaMajor);
   const health = await readModHealth(dir);
   const installed = await listInstalled(false);
   const repaired: string[] = [];
@@ -1046,20 +1047,20 @@ export async function repairInstalledMods(
 
   // Local Fabric metadata is enough for the common healthy case. Modrinth is
   // contacted only when the installed set changed and exposes a real issue.
-  const localIssues = fabricCompatibilityIssues(await fabricDescriptors());
+  const localIssues = fabricCompatibilityIssues(await fabricDescriptors(), javaMajor);
   if (localIssues.length) {
     const dependencyRepairs = await reconcileRequiredModVersions(onStatus);
     for (const title of dependencyRepairs) {
       if (!repaired.includes(title)) repaired.push(title);
     }
     const compatibilityRepairs =
-      await reconcileFabricMetadataCompatibility(onStatus);
+      await reconcileFabricMetadataCompatibility(onStatus, javaMajor);
     for (const title of compatibilityRepairs) {
       if (!repaired.includes(title)) repaired.push(title);
     }
   }
 
-  await writeModHealth(dir);
+  await writeModHealth(dir, javaMajor);
   return { repaired, disabled };
 }
 
@@ -1126,13 +1127,14 @@ function constraintText(constraint: FabricConstraint): string {
 
 async function reconcileFabricMetadataCompatibility(
   onStatus?: (message: string) => void,
+  javaMajor = GAME.javaMajor as number,
 ): Promise<string[]> {
   const repaired: string[] = [];
   const attempted = new Set<string>();
 
   for (let pass = 0; pass < 8; pass += 1) {
     const descriptors = await fabricDescriptors();
-    const issues = fabricCompatibilityIssues(descriptors);
+    const issues = fabricCompatibilityIssues(descriptors, javaMajor);
     if (!issues.length) return repaired;
 
     const installedProjectIds = new Set(
@@ -1224,6 +1226,7 @@ async function reconcileFabricMetadataCompatibility(
     if (changed) continue;
 
     const issue = issues[0];
+    if (issue.targetId === "java") throw new Error(`${issue.source.name} требует Java ${constraintText(issue.constraint)}; выбрана Java ${javaMajor}. Измените Java в настройках экземпляра.`);
     const relation =
       issue.kind === "missing"
         ? "требует отсутствующий мод"
@@ -1258,6 +1261,13 @@ export async function installProject(
   const dependencyTitles: string[] = [];
   const visiting = new Set<string>();
 
+  async function compatibleInstalled(mod: InstalledMod): Promise<boolean> {
+    if (!mod.enabled) return false;
+    const descriptor = await readFabricModDescriptor(join(await modsDir(), mod.filename), mod);
+    return Boolean(descriptor && satisfiesVersion(GAME.minecraftVersion, descriptor.depends.minecraft ?? "*")
+      && satisfiesVersion(GAME.fabricLoader, descriptor.depends.fabricloader ?? "*"));
+  }
+
   function inferredInstalled(displayTitle: string): InstalledMod | undefined {
     const needle = normalizedName(displayTitle);
     if (needle.length < 4) return undefined;
@@ -1274,16 +1284,17 @@ export async function installProject(
     requestedVersionId: string | null,
     root: boolean,
   ): Promise<InstalledMod> {
-    const already = byProject.get(id);
+    let already = byProject.get(id);
     if (
       already &&
-      (!requestedVersionId || already.versionId === requestedVersionId)
+      (!requestedVersionId || already.versionId === requestedVersionId) &&
+      await compatibleInstalled(already)
     )
       return already;
     const details = await project(id);
     displayTitle = details.title || displayTitle;
     const inferred = inferredInstalled(displayTitle);
-    if (inferred) {
+    if (inferred && await compatibleInstalled(inferred)) {
       const remembered = await attachMetadata(
         inferred,
         id,
@@ -1293,6 +1304,7 @@ export async function installProject(
       byProject.set(id, remembered);
       return remembered;
     }
+    already ??= inferred;
     if (visiting.has(id))
       throw new Error(`Циклическая зависимость: ${displayTitle}`);
     visiting.add(id);

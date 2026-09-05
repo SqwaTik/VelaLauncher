@@ -1,4 +1,5 @@
 import { app } from "electron";
+import { randomUUID } from "crypto";
 import { promises as fs } from "fs";
 import { dirname, join, relative, resolve } from "path";
 import type {
@@ -10,20 +11,26 @@ import type {
   Friend,
 } from "../../shared/types";
 import { GAME } from "../../shared/constants";
+import { syncAppearanceManifest } from "./appearance-export";
 
 /**
  * Tiny JSON-file persistence in Electron's userData dir. Atomic writes via a
  * temp file + rename so a crash mid-write can't corrupt the config.
  */
 
-const CONFIG_FILE = () => join(app.getPath("userData"), "royale-config.json");
-export const DEFAULT_INSTANCE_ID = "royale-master";
+const CONFIG_FILE = () => join(app.getPath("userData"), "vela-config.json");
+const LEGACY_CONFIG_FILE = () =>
+  join(app.getPath("userData"), "royale-config.json");
+const DEFAULT_STORAGE_PATH = () => join(app.getPath("appData"), ".vela");
+const LEGACY_STORAGE_PATH = () => join(app.getPath("appData"), ".royale");
+export const DEFAULT_INSTANCE_ID = "vela-main";
 export const MAX_INSTANCES = 4;
 
 function defaultInstance(): GameInstance {
   return {
     id: DEFAULT_INSTANCE_ID,
     name: "Vela",
+    minecraftVersion: GAME.minecraftVersion,
     directory: "",
     source: "default",
     iconDataUrl: null,
@@ -40,7 +47,7 @@ function defaultInstance(): GameInstance {
 function defaultSettings(): AppSettings {
   return {
     language: "ru",
-    storagePath: join(app.getPath("appData"), ".royale"),
+    storagePath: DEFAULT_STORAGE_PATH(),
     telemetry: false,
     gpuDedicated: true,
     gpuProfile: "auto",
@@ -93,12 +100,103 @@ function defaultState(): PersistShape {
 }
 
 let cache: PersistShape | null = null;
+let loading: Promise<PersistShape> | null = null;
+let persistenceQueue: Promise<void> = Promise.resolve();
+
+async function readPersistedState(): Promise<{
+  parsed: Partial<PersistShape>;
+  legacyConfig: boolean;
+}> {
+  try {
+    return {
+      parsed: JSON.parse(await fs.readFile(CONFIG_FILE(), "utf-8")),
+      legacyConfig: false,
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    try {
+      return {
+        parsed: JSON.parse(await fs.readFile(LEGACY_CONFIG_FILE(), "utf-8")),
+        legacyConfig: true,
+      };
+    } catch (legacyError) {
+      if ((legacyError as NodeJS.ErrnoException).code !== "ENOENT")
+        throw legacyError;
+      return { parsed: defaultState(), legacyConfig: false };
+    }
+  }
+}
+
+export async function migrateLegacyStorage(
+  configuredPath: string,
+  legacy = LEGACY_STORAGE_PATH(),
+  target = DEFAULT_STORAGE_PATH(),
+): Promise<string> {
+  const normalize = (path: string): string => resolve(path).toLowerCase();
+  if (normalize(configuredPath) !== normalize(legacy)) return configuredPath;
+  try {
+    await fs.access(legacy);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    return target;
+  }
+  // Promote only a complete copy. Both the source and any pre-existing Vela
+  // directory remain recoverable, including after an interrupted migration.
+  const staging = `${target}-migration-${randomUUID()}`;
+  await fs.cp(legacy, staging, {
+    recursive: true,
+    force: false,
+    errorOnExist: true,
+    verbatimSymlinks: true,
+  });
+  const remapSharedLinks = async (directory: string): Promise<void> => {
+    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isSymbolicLink()) {
+        const linked = resolve(dirname(path), await fs.readlink(path));
+        const nested = relative(legacy, linked);
+        if (!nested.startsWith("..") && !nested.includes(":")) {
+          await fs.unlink(path);
+          await fs.symlink(join(target, nested), path, "junction");
+        }
+      } else if (entry.isDirectory()) {
+        await remapSharedLinks(path);
+      }
+    }
+  };
+  await remapSharedLinks(staging);
+  let previous: string | null = null;
+  try {
+    await fs.access(target);
+    previous = `${target}-before-migration-${randomUUID()}`;
+    await fs.rename(target, previous);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  try {
+    await fs.rename(staging, target);
+  } catch (error) {
+    if (previous) await fs.rename(previous, target);
+    throw error;
+  }
+  return target;
+}
 
 export async function loadState(): Promise<PersistShape> {
+  if (loading) return loading;
   if (cache) return cache;
+  loading = initializeState();
   try {
-    const raw = await fs.readFile(CONFIG_FILE(), "utf-8");
-    const parsed = JSON.parse(raw) as Partial<PersistShape>;
+    return await loading;
+  } finally {
+    loading = null;
+  }
+}
+
+async function initializeState(): Promise<PersistShape> {
+  try {
+    const { parsed, legacyConfig } = await readPersistedState();
+    let needsPersist = legacyConfig;
     // merge so new default keys appear for old configs
     cache = {
       ...defaultState(),
@@ -113,24 +211,36 @@ export async function loadState(): Promise<PersistShape> {
       ? savedInstances.map((instance) => ({
           ...defaultInstance(),
           ...instance,
+          id:
+            instance.id === "royale-master"
+              ? DEFAULT_INSTANCE_ID
+              : instance.id,
           name:
             instance.name === "Royale Master" || instance.name === "Royale"
               ? "Vela"
               : instance.name,
+          minecraftVersion: GAME.supportedMinecraftVersions.some(
+            (version) => version === instance.minecraftVersion,
+          )
+            ? instance.minecraftVersion
+            : GAME.minecraftVersion,
           sharedFolders: {
             ...defaultInstance().sharedFolders,
             ...(instance.sharedFolders ?? {}),
           },
         }))
       : [defaultInstance()];
+    const parsedActiveId =
+      parsed.activeInstanceId === "royale-master"
+        ? DEFAULT_INSTANCE_ID
+        : parsed.activeInstanceId;
     cache.activeInstanceId =
-      cache.instances.find((item) => item.id === parsed.activeInstanceId)?.id ??
+      cache.instances.find((item) => item.id === parsedActiveId)?.id ??
       cache.instances[0].id;
-    cache.accounts = (cache.accounts ?? []).filter(
-      (account) => account.type !== "microsoft",
-    );
+    cache.accounts = Array.isArray(cache.accounts) ? cache.accounts : [];
+    const savedActiveAccountId = cache.activeAccountId;
     cache.activeAccountId =
-      cache.accounts.find((item) => item.id === cache.activeAccountId)?.id ??
+      cache.accounts.find((item) => item.id === savedActiveAccountId)?.id ??
       cache.accounts[0]?.id ??
       null;
     if (
@@ -155,24 +265,51 @@ export async function loadState(): Promise<PersistShape> {
     }
     const defaults = defaultSettings();
     cache.settings = { ...defaults, ...cache.settings };
+    const migratedStoragePath = await migrateLegacyStorage(
+      cache.settings.storagePath,
+    );
+    if (migratedStoragePath !== cache.settings.storagePath) {
+      const previousRoot = cache.settings.storagePath;
+      const remap = (value: string | null | undefined): string | null => {
+        if (!value) return null;
+        const tail = relative(resolve(previousRoot), resolve(value));
+        return !tail.startsWith("..") && !tail.includes(":") ? join(migratedStoragePath, tail) : value;
+      };
+      cache.settings.javaPath = remap(cache.settings.javaPath);
+      cache.settings.backgroundImagePath = remap(cache.settings.backgroundImagePath);
+      cache.settings.backgroundMediaPath = remap(cache.settings.backgroundMediaPath);
+      cache.settings.galleryImagePaths = cache.settings.galleryImagePaths.map(path => remap(path) ?? path);
+      for (const instance of cache.instances) if (instance.javaPath) instance.javaPath = remap(instance.javaPath);
+      cache.settings.storagePath = migratedStoragePath;
+      needsPersist = true;
+    }
     cache.stats = {
       installedCommitSha: null,
       installedClientVersion: null,
       lastUpdateCheck: null,
       ...cache.stats,
     };
-  } catch {
-    cache = defaultState();
+    if (needsPersist || JSON.stringify(cache) !== JSON.stringify(parsed))
+      await persist();
+  } catch (error) {
+    cache = null;
+    throw new Error("Не удалось прочитать или перенести данные Vela. Исходные файлы сохранены.", { cause: error });
   }
-  return cache;
+  return cache!;
 }
 
 async function persist(): Promise<void> {
   if (!cache) return;
   const file = CONFIG_FILE();
-  const tmp = `${file}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(cache, null, 2), "utf-8");
-  await fs.rename(tmp, file);
+  const snapshot = JSON.stringify(cache, null, 2);
+  const write = persistenceQueue.catch(() => undefined).then(async () => {
+    await fs.mkdir(dirname(file), { recursive: true });
+    const tmp = `${file}.${randomUUID()}.tmp`;
+    await fs.writeFile(tmp, snapshot, "utf-8");
+    await fs.rename(tmp, file);
+  });
+  persistenceQueue = write;
+  await write;
 }
 
 async function prepareSharedFolders(state: PersistShape): Promise<void> {
@@ -218,6 +355,7 @@ export async function saveSettings(
   const state = await loadState();
   state.settings = settings;
   await persist();
+  await syncAppearanceManifest(state.settings.storagePath, state.accounts);
   return state;
 }
 
@@ -232,6 +370,7 @@ export async function saveAccounts(
     state.accounts[0]?.id ??
     null;
   await persist();
+  await syncAppearanceManifest(state.settings.storagePath, state.accounts);
   return state;
 }
 
@@ -240,7 +379,14 @@ export async function saveInstances(
   activeInstanceId: string,
 ): Promise<PersistShape> {
   const state = await loadState();
-  const normalized = instances.slice(0, MAX_INSTANCES);
+  const normalized = instances.slice(0, MAX_INSTANCES).map((instance) => ({
+    ...instance,
+    minecraftVersion: GAME.supportedMinecraftVersions.some(
+      (version) => version === instance.minecraftVersion,
+    )
+      ? instance.minecraftVersion
+      : GAME.minecraftVersion,
+  }));
   if (!normalized.length) normalized.push(defaultInstance());
   state.instances = normalized;
   state.activeInstanceId =
@@ -256,6 +402,13 @@ export async function saveFriends(friends: Friend[]): Promise<PersistShape> {
   state.friends = friends;
   await persist();
   return state;
+}
+
+export async function recordPlaytime(minutes: number): Promise<void> {
+  const state = await loadState();
+  state.stats.playtimeMinutes += Math.max(0, minutes);
+  state.stats.lastPlayed = Date.now();
+  await persist();
 }
 
 export async function updateStats(
@@ -306,6 +459,7 @@ export async function createImportedInstance(
   const instance: GameInstance = {
     id,
     name: name.trim() || "Импортированная сборка",
+    minecraftVersion: GAME.minecraftVersion,
     directory: id,
     source: "imported",
     iconDataUrl: null,
