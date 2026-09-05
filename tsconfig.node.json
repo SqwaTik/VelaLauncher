@@ -1,25 +1,23 @@
 {
   "include": [
-    "src/renderer/src/**/*",
-    "src/renderer/src/**/*.vue",
-    "src/shared/**/*",
-    "src/preload/*.d.ts"
+    "electron.vite.config.*",
+    "src/main/**/*",
+    "src/preload/**/*",
+    "src/shared/**/*"
   ],
   "compilerOptions": {
     "composite": true,
-    "baseUrl": ".",
+    "types": ["electron-vite/node", "node"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "target": "ES2022",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "jsx": "preserve",
+    "lib": ["ES2022"],
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "types": ["vite/client"],
+    "baseUrl": ".",
     "paths": {
-      "@/*": ["src/renderer/src/*"],
       "@shared/*": ["src/shared/*"]
     }
   }

@@ -1,12 +1,6 @@
 node_modules/
 out/
 dist/
-outputs/
-native/**/bin/
-native/**/obj/
-native/**/wwwroot/
-src/renderer/
-src/webview/assets/vela-logo.png
 *.log
 *.tsbuildinfo
 .DS_Store

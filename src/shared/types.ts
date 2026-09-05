@@ -15,7 +15,7 @@ export interface StoredAccount {
   accessToken?: string;
   refreshToken?: string;
   expiresAt?: number;
-  /** Third-party Yggdrasil client token used for token refresh. */
+  /** Ely.by Yggdrasil client token used for token refresh. */
   clientToken?: string;
 }
 
@@ -111,7 +111,7 @@ export interface LauncherStats {
   playtimeMinutes: number;
   lastPlayed: number | null;
   installed: boolean;
-  /** Git commit from which the installed Vela client jar was produced. */
+  /** Git commit from which the installed Royale client jar was produced. */
   installedCommitSha?: string | null;
   installedClientVersion?: string | null;
   lastUpdateCheck?: number | null;
