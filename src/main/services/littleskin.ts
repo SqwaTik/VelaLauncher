@@ -23,7 +23,7 @@ async function request(
     headers: {
       "Content-Type": "application/json",
       Accept: "application/json",
-      "User-Agent": "VelaLauncher/0.1.5",
+      "User-Agent": "VelaLauncher/0.1.6",
     },
     body: JSON.stringify(body),
   });

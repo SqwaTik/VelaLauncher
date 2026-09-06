@@ -9,6 +9,7 @@ import type { TaskContext } from "@xmcl/task";
 import { GAME, IPC } from "../../shared/constants";
 import type { InstallProgress, JavaInfo } from "../../shared/types";
 import { loadState, saveSettings } from "./store";
+import { resilientDownloadDispatcher } from "./network";
 
 const execFileAsync = promisify(execFile);
 
@@ -175,7 +176,8 @@ export async function installRequiredJava(): Promise<JavaInfo> {
     url,
     destination: archive,
     pendingFile: `${archive}.pending`,
-    headers: { "User-Agent": "VelaLauncher/0.1.5" },
+    headers: { "User-Agent": "VelaLauncher/0.1.6" },
+    dispatcher: resilientDownloadDispatcher,
     progressController: (_url, _chunk, written, total) => {
       const now = Date.now();
       if (now - lastAt >= 350) {

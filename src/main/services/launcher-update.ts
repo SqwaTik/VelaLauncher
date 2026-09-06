@@ -10,6 +10,7 @@ import type {
   LauncherUpdateInfo,
   LauncherUpdateProgress,
 } from "../../shared/types";
+import { fetchWithRetry } from "./network";
 
 const REPOSITORY = "SqwaTik/VelaLauncher";
 const RELEASES_URL = `https://github.com/${REPOSITORY}/releases`;
@@ -46,7 +47,7 @@ function isNewer(latest: string, current: string): boolean {
 
 export async function checkLauncherUpdate(): Promise<LauncherUpdateInfo> {
   const currentVersion = app.getVersion();
-  const response = await fetch(
+  const response = await fetchWithRetry(
     `https://api.github.com/repos/${REPOSITORY}/releases/latest`,
     {
       headers: {
@@ -107,11 +108,12 @@ async function downloadInstaller(
   destination: string,
 ): Promise<void> {
   let lastError: unknown;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
+  const attempts = 5;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const partial = `${destination}.part`;
     await fs.rm(partial, { force: true });
     try {
-      const response = await fetch(url, {
+      const response = await fetchWithRetry(url, {
         redirect: "follow",
         headers: { "User-Agent": USER_AGENT },
       });
@@ -135,7 +137,7 @@ async function downloadInstaller(
               totalBytes,
               message:
                 attempt > 1
-                  ? `Повторная загрузка · попытка ${attempt}/3`
+                  ? `Повторная загрузка · попытка ${attempt}/${attempts}`
                   : "Загрузка обновления лаунчера",
             });
           }
@@ -160,7 +162,10 @@ async function downloadInstaller(
     } catch (error) {
       lastError = error;
       await fs.rm(partial, { force: true });
-      if (attempt === 3) break;
+      if (attempt === attempts) break;
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, Math.min(5_000, 700 * attempt)),
+      );
     }
   }
   throw lastError;

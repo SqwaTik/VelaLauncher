@@ -22,45 +22,24 @@ import type {
   InstalledShaderPack,
 } from "../../shared/types";
 import { modsDir, resourcePacksDir, shaderPacksDir } from "./store";
+import { fetchWithRetry as resilientFetchWithRetry } from "./network";
 
 const UA = "SqwaTik/VelaLauncher (vela-launcher)";
 const responseCache = new Map<string, { expires: number; value: unknown }>();
 
 async function fetchWithRetry(
   input: string | URL,
-  attempts = 3,
+  attempts = 5,
 ): Promise<Response> {
-  let lastResponse: Response | null = null;
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    try {
-      const response = await fetch(input, {
-        headers: {
-          "User-Agent": UA,
-          "Accept-Encoding": "identity",
-        },
-      });
-      if (
-        response.ok ||
-        (response.status !== 408 &&
-          response.status !== 425 &&
-          response.status !== 429 &&
-          response.status < 500)
-      ) {
-        return response;
-      }
-      lastResponse = response;
-    } catch {
-      lastResponse = null;
-    }
-    if (attempt + 1 < attempts) {
-      await new Promise<void>((resolve) =>
-        setTimeout(resolve, 450 * (attempt + 1)),
-      );
-    }
-  }
-  if (lastResponse) return lastResponse;
-  throw new Error(
-    "Сервер загрузки временно недоступен. Проверьте интернет и повторите попытку.",
+  return resilientFetchWithRetry(
+    input,
+    {
+      headers: {
+        "User-Agent": UA,
+        "Accept-Encoding": "identity",
+      },
+    },
+    attempts,
   );
 }
 
@@ -764,7 +743,8 @@ async function downloadVerifiedArchive(
 ): Promise<void> {
   let lastError: unknown;
 
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
+  const attempts = 5;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
     await fs.rm(temporary, { force: true });
     onProgress(0);
     try {
@@ -813,17 +793,17 @@ async function downloadVerifiedArchive(
     } catch (error) {
       lastError = error;
       await fs.rm(temporary, { force: true });
-      if (attempt < 3)
+      if (attempt < attempts)
         await new Promise<void>((resolve) =>
-          setTimeout(resolve, 350 * attempt),
+          setTimeout(resolve, Math.min(5_000, 600 * attempt)),
         );
     }
   }
 
   throw new Error(
     lastError instanceof Error
-      ? `Не удалось получить целый файл после трёх попыток: ${lastError.message}`
-      : "Не удалось получить целый файл после трёх попыток.",
+      ? `Не удалось получить целый файл после ${attempts} попыток: ${lastError.message}`
+      : `Не удалось получить целый файл после ${attempts} попыток.`,
   );
 }
 

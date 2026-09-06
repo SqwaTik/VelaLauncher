@@ -1,4 +1,5 @@
 import type { MinecraftProfile } from "../../shared/types";
+import { fetchWithRetry } from "./network";
 
 const USERNAME_RE = /^[A-Za-z0-9_]{3,16}$/;
 
@@ -18,12 +19,12 @@ export async function resolveMinecraftProfile(
     );
   }
 
-  const response = await fetch(
+  const response = await fetchWithRetry(
     `https://api.mojang.com/users/profiles/minecraft/${encodeURIComponent(name)}`,
     {
       headers: {
         Accept: "application/json",
-        "User-Agent": "VelaLauncher/0.1.5",
+        "User-Agent": "VelaLauncher/0.1.6",
       },
     },
   );

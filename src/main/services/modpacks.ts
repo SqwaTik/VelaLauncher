@@ -26,6 +26,7 @@ import {
   gameDir,
   removeInstance,
 } from "./store";
+import { fetchWithRetry } from "./network";
 
 const USER_AGENT = "SqwaTik/VelaLauncher (vela-launcher)";
 const DOWNLOAD_HOSTS = new Set([
@@ -112,24 +113,39 @@ async function downloadMrpackFile(file: MrpackFile, destination: string): Promis
     throw new Error(`Сборка содержит запрещённый адрес загрузки: ${url.hostname || "unknown"}`);
   }
   await fs.mkdir(dirname(destination), { recursive: true });
-  const temporary = `${destination}.royale-part`;
-  const response = await fetch(url, {
-    headers: { "User-Agent": USER_AGENT },
-    redirect: "follow",
-  });
-  if (!response.ok || !response.body) {
-    throw new Error(`Не удалось загрузить ${basename(file.path)} (${response.status})`);
-  }
-  await pipeline(
-    Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
-    createWriteStream(temporary),
-  );
-  if (!(await fileMatches(temporary, file))) {
+  const temporary = `${destination}.vela-part`;
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
     await fs.rm(temporary, { force: true });
-    throw new Error(`Файл ${basename(file.path)} не прошёл проверку целостности`);
+    try {
+      const response = await fetchWithRetry(url, {
+        headers: { "User-Agent": USER_AGENT },
+        redirect: "follow",
+      });
+      if (!response.ok || !response.body) {
+        throw new Error(`Сервер ответил кодом ${response.status}`);
+      }
+      await pipeline(
+        Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
+        createWriteStream(temporary),
+      );
+      if (!(await fileMatches(temporary, file))) {
+        throw new Error("файл не прошёл проверку целостности");
+      }
+      await fs.rm(destination, { force: true });
+      await fs.rename(temporary, destination);
+      return;
+    } catch (error) {
+      lastError = error;
+      await fs.rm(temporary, { force: true });
+      if (attempt < 5)
+        await new Promise<void>((resolve) => setTimeout(resolve, 650 * attempt));
+    }
   }
-  await fs.rm(destination, { force: true });
-  await fs.rename(temporary, destination);
+  throw new Error(
+    `Не удалось загрузить ${basename(file.path)} после пяти попыток`,
+    { cause: lastError },
+  );
 }
 
 async function copyTree(source: string, destination: string): Promise<number> {

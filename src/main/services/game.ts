@@ -42,6 +42,11 @@ import {
 import { setDiscordActivity } from "./discord";
 import { bundledClientUpdate, installBundledClient } from "./bundled-client";
 import { syncAppearanceManifest } from "./appearance-export";
+import {
+  fetchWithRetry,
+  resilientDownloadDispatcher,
+  resilientFetch,
+} from "./network";
 
 const execAsync = promisify(exec);
 const USER_AGENT = "SqwaTik/VelaLauncher";
@@ -172,8 +177,10 @@ async function ensureFabricProfile(folder: MinecraftFolder): Promise<void> {
     const local = JSON.parse(await fs.readFile(path, "utf8"));
     if (local.velaProfileVersion === 1 && local.inheritsFrom === GAME.minecraftVersion) return;
   } catch { /* install official profile below */ }
-  const response = await fetch(`https://meta.fabricmc.net/v2/versions/loader/${GAME.minecraftVersion}/${GAME.fabricLoader}/profile/json`,
-    { signal: AbortSignal.timeout(20_000), headers: { "User-Agent": USER_AGENT } });
+  const response = await fetchWithRetry(
+    `https://meta.fabricmc.net/v2/versions/loader/${GAME.minecraftVersion}/${GAME.fabricLoader}/profile/json`,
+    { headers: { "User-Agent": USER_AGENT } },
+  );
   if (!response.ok) throw new Error(`Fabric: HTTP ${response.status}`);
   const profile = await response.json() as Record<string, any>;
   if (profile.inheritsFrom !== GAME.minecraftVersion || profile.mainClass !== "net.fabricmc.loader.impl.launch.knot.KnotClient" || !Array.isArray(profile.libraries))
@@ -183,7 +190,10 @@ async function ensureFabricProfile(folder: MinecraftFolder): Promise<void> {
   await fs.writeFile(temporary, JSON.stringify({ ...profile, id: fabricVersionId(), velaProfileVersion: 1 }, null, 2));
   await fs.rename(temporary, path);
   const resolved = await Version.parse(folder, fabricVersionId());
-  await installResolvedLibrariesTask(resolved.libraries, folder).startAndWait();
+  await installResolvedLibrariesTask(resolved.libraries, folder, {
+    dispatcher: resilientDownloadDispatcher,
+    librariesDownloadConcurrency: 4,
+  }).startAndWait();
 }
 
 function minecraftTaskContext(
@@ -264,6 +274,7 @@ async function runDownload(
     destination,
     pendingFile: `${destination}.part`,
     headers: { "User-Agent": USER_AGENT },
+    dispatcher: resilientDownloadDispatcher,
     progressController: (_url, _chunk, written, total) => {
       if (cancelRequested) return;
       const now = Date.now();
@@ -355,6 +366,15 @@ function installationErrorMessage(error: unknown): string {
   const unique = [...new Set(messages.map((message) => message.trim()))];
   if (!unique.length)
     return "Не удалось подключиться к серверу загрузки. Проверьте интернет и повторите попытку.";
+  if (
+    unique.some((message) =>
+      /timed?\s*out|timeout|UND_ERR_(?:CONNECT|HEADERS|BODY)_TIMEOUT|ETIMEDOUT/i.test(
+        message,
+      ),
+    )
+  ) {
+    return "Сервер загрузки слишком долго не отвечал. Запустите загрузку ещё раз — уже полученные файлы проверятся и повторно скачиваться не будут.";
+  }
   const useful = unique.filter(
     (message) =>
       !/^aggregate\s*error$/i.test(message) &&
@@ -391,7 +411,7 @@ export async function installGame(): Promise<void> {
       GAME.minecraftVersion,
       { canPause: false },
     );
-    const list = await getVersionList();
+    const list = await getVersionList({ fetch: resilientFetch });
     const meta = list.versions.find(
       (version) => version.id === GAME.minecraftVersion,
     );
@@ -401,61 +421,45 @@ export async function installGame(): Promise<void> {
       );
 
     let resolved: ResolvedVersion | null = null;
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
-      const task = installTask(meta, folder);
-      let lastActivity = Date.now();
-      let stalled = false;
+    const totalAttempts = 4;
+    for (let attempt = 1; attempt <= totalAttempts; attempt += 1) {
+      // Reduce parallel traffic after a failed pass. Completed and verified
+      // files are reused, so a retry only requests what is still missing.
+      const task = installTask(meta, folder, {
+        dispatcher: resilientDownloadDispatcher,
+        fetch: resilientFetch,
+        assetsDownloadConcurrency: Math.max(3, 9 - attempt * 2),
+        librariesDownloadConcurrency: Math.max(2, 5 - attempt),
+      });
       currentTask = task;
-      const watchdog = setInterval(() => {
-        if (
-          task.isRunning &&
-          !task.isPaused &&
-          Date.now() - lastActivity > 45_000
-        ) {
-          stalled = true;
-          void task.cancel().catch(() => undefined);
-        }
-      }, 5_000);
       try {
-        resolved = await task.startAndWait(
-          minecraftTaskContext(task, () => {
-            lastActivity = Date.now();
-          }),
-        );
+        resolved = await task.startAndWait(minecraftTaskContext(task));
         currentTask = null;
         break;
       } catch (cause) {
         currentTask = null;
         if (
           cancelRequested ||
-          (cause instanceof CancelledError && !stalled) ||
-          attempt === 3
+          cause instanceof CancelledError ||
+          attempt === totalAttempts
         ) {
-          throw stalled
-            ? new Error(
-                "Загрузка не получала данные больше 45 секунд. Проверьте соединение и повторите попытку.",
-              )
-            : cause;
+          throw cause;
         }
         report(
           "metadata",
           lastProgress.progress,
-          stalled
-            ? "Загрузка остановилась — продолжаем"
-            : "Повторное подключение",
-          `Автоматическая попытка ${attempt + 1} из 3`,
+          "Восстанавливаем загрузку",
+          `Автоматическая попытка ${attempt + 1} из ${totalAttempts}`,
           { canPause: false },
         );
         await new Promise<void>((resolve) =>
-          setTimeout(resolve, 700 * attempt),
+          setTimeout(resolve, 900 * attempt),
         );
-      } finally {
-        clearInterval(watchdog);
       }
     }
     if (!resolved)
       throw new Error(
-        "Не удалось загрузить Minecraft после трёх попыток. Проверьте соединение.",
+        `Не удалось загрузить Minecraft после ${totalAttempts} попыток. Проверьте соединение.`,
       );
     if (cancelRequested) throw new Error("Установка отменена");
 
@@ -542,7 +546,7 @@ async function ensureAuthlibInjector(storagePath: string): Promise<string> {
   const root = join(storagePath, "authlib-injector");
   const jar = join(root, "authlib-injector.jar");
   await fs.mkdir(root, { recursive: true });
-  const metadata = await fetch(
+  const metadata = await fetchWithRetry(
     "https://authlib-injector.yushi.moe/artifact/latest.json",
     {
       headers: { "User-Agent": USER_AGENT, Accept: "application/json" },
@@ -623,7 +627,7 @@ async function repairLaunchFiles(
       state: "launching",
       message: "Восстанавливаем файлы Minecraft",
     });
-    const list = await getVersionList();
+    const list = await getVersionList({ fetch: resilientFetch });
     const metadata = list.versions.find(
       (entry) => entry.id === resolved.minecraftVersion,
     );
@@ -631,7 +635,9 @@ async function repairLaunchFiles(
       throw new Error(
         `Не удалось найти Minecraft ${resolved.minecraftVersion} для восстановления.`,
       );
-    await installVersionTask(metadata, folder).startAndWait();
+    await installVersionTask(metadata, folder, {
+      dispatcher: resilientDownloadDispatcher,
+    }).startAndWait();
     resolved = await Version.parse(folder, versionId);
   }
 
@@ -659,7 +665,8 @@ async function repairLaunchFiles(
       message: `Докачиваем ${missingLibraries.length} библиотек`,
     });
     await installResolvedLibrariesTask(missingLibraries, folder, {
-      librariesDownloadConcurrency: 8,
+      dispatcher: resilientDownloadDispatcher,
+      librariesDownloadConcurrency: 4,
     }).startAndWait();
   }
 
@@ -691,7 +698,9 @@ async function repairLaunchFiles(
         message: "Восстанавливаем ассеты Minecraft",
       });
       await installAssetsTask(resolved, {
-        assetsDownloadConcurrency: 16,
+        dispatcher: resilientDownloadDispatcher,
+        fetch: resilientFetch,
+        assetsDownloadConcurrency: 8,
         prevalidSizeOnly: true,
       }).startAndWait();
     } else {
@@ -721,7 +730,9 @@ async function repairLaunchFiles(
           message: `Докачиваем ${missing.length} файлов игры`,
         });
         await installResolvedAssetsTask(missing, folder, {
-          assetsDownloadConcurrency: 16,
+          dispatcher: resilientDownloadDispatcher,
+          fetch: resilientFetch,
+          assetsDownloadConcurrency: 8,
           prevalidSizeOnly: true,
         }).startAndWait();
       }

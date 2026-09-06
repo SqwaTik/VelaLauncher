@@ -6,6 +6,7 @@ import { loadState, saveSettings, saveAccounts, migrateLegacyStorage, recordPlay
 import { decodeAppearancePng, syncAppearanceManifest } from "../main/services/appearance-export";
 import { bundledClientUpdate, installBundledClient } from "../main/services/bundled-client";
 import { launchGame, cancelLaunch, gameOperationBusy } from "../main/services/game";
+import { isTransientNetworkError } from "../main/services/network";
 
 const t=(globalThis as any).__velaVerify;
 let checks=0;
@@ -15,6 +16,11 @@ await check("Java 25 and Java 21 are distinguished",()=>{
  assert.equal(parseJavaVersion('java version "21.0.8"')?.major,21);
  assert.equal(parseJavaVersion('java version "1.8.0_471"')?.major,8);
  assert.equal(parseJavaVersion("garbage"),null);
+});
+await check("download timeouts and broken sockets are retryable",()=>{
+ assert.equal(isTransientNetworkError(Object.assign(new Error("connect timeout"),{code:"UND_ERR_CONNECT_TIMEOUT"})),true);
+ assert.equal(isTransientNetworkError(new Error("socket disconnected")),true);
+ assert.equal(isTransientNetworkError(new Error("invalid archive format")),false);
 });
 await check("PNG rejects malformed and oversized dimensions",()=>{
  assert.throws(()=>decodeAppearancePng("data:text/plain;base64,AAAA","skin"));
@@ -85,4 +91,3 @@ await check("simultaneous playtime increments are accumulated",async()=>{
  const before=(await loadState()).stats.playtimeMinutes;await Promise.all([recordPlaytime(3),recordPlaytime(7)]);assert.equal((await loadState()).stats.playtimeMinutes,before+10);
 });
 console.log(checks+" runtime regression checks passed; Minecraft was not started.");
-
