@@ -860,7 +860,9 @@ export async function launchGame(account: StoredAccount): Promise<void> {
     const developerJvmArgs = state.settings.devMode
       ? ["-Dvela.launcher.devMode=true"]
       : [];
+    const { independentSpawn } = await import('./independent-process');
     const process = await launch({
+      spawn: independentSpawn(join(dir, 'logs', 'launcher')) as typeof import('node:child_process').spawn,
       gamePath: dir,
       resourcePath: dir,
       javaPath: java.path,

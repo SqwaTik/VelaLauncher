@@ -20,7 +20,7 @@ export const GAME = {
   fabricLoader: "0.19.5",
   fabricApi: "0.159.0+26.2",
   javaMajor: 25,
-  clientVersion: "0.1.3",
+  clientVersion: "0.1.4",
   loader: "fabric" as const,
 } as const;
 
