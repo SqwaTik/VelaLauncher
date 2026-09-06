@@ -49,12 +49,12 @@ await check("cosmetic manifest never contains credentials and supports every pro
  await saveAccounts([account],account.id);
  const state=await loadState();assert((await fs.readFile(join(state.settings.storagePath,"appearance","manifest.json"),"utf8")).includes("capeHidden"));
 });
-await check("bundle installs Vela 0.1.2 and IAS 26.2 and repairs modified bytes",async()=>{
+await check("bundle installs Vela 0.1.3 and IAS 26.2 and repairs modified bytes",async()=>{
  const root=join(t.root,"bundle");
  await installBundledClient(root);
  assert.equal((await bundledClientUpdate(root)).available,false);
  const jars=await fs.readdir(join(root,"mods"));
- assert(jars.some(name=>name.includes("vela-client-0.1.2")));assert(jars.includes("IAS-9.0.7+26.2-fabric.jar"));
+ assert(jars.some(name=>name.includes("vela-client-0.1.3")));assert(jars.includes("IAS-9.0.7+26.2-fabric.jar"));
  const vela=jars.find(name=>name.startsWith("vela-client"))!;
  await fs.writeFile(join(root,"mods",vela),"broken");
  assert.equal((await bundledClientUpdate(root)).available,true);
