@@ -121,7 +121,7 @@ function createWindow(): void {
     icon: app.isPackaged
       ? join(process.resourcesPath, "icon.ico")
       : join(process.cwd(), "build", "icon.ico"),
-    backgroundColor: "#0e0f16",
+    backgroundColor: "#090a12",
     titleBarStyle: "hidden",
     webPreferences: {
       preload: join(__dirname, "../preload/index.mjs"),

@@ -8,7 +8,7 @@ const root = await mkdtemp(join(tmpdir(), "vela-verification-"));
 const state = { root, repo: resolve("."), events: [], children: [], failNext: false };
 globalThis.__velaVerify = state;
 const mocks = {
- electron: `const t=globalThis.__velaVerify;export const app={isPackaged:false,getAppPath:()=>t.repo,getPath:(kind)=>kind==="userData"?t.root+"/config":t.root};
+ electron: `const t=globalThis.__velaVerify;export const app={quit(){},isPackaged:false,getAppPath:()=>t.repo,getPath:(kind)=>kind==="userData"?t.root+"/config":t.root};
  export const BrowserWindow={getAllWindows:()=>[{webContents:{send:(channel,status)=>t.events.push({channel,...status})},isVisible:()=>true,hide(){},show(){},focus(){}}]};
  export const shell={};`,
  core: `import { EventEmitter } from "node:events";import { join } from "node:path";
@@ -23,7 +23,7 @@ const mocks = {
  java: `export const detectJava=async()=>({path:"java25.exe",valid:true,majorVersion:25,version:"25.0.1"});export const installRequiredJava=detectJava;`,
  mods: `export const installProject=async()=>{};export const repairInstalledMods=async()=>{};export const isJarStructurallyValid=async()=>true;`,
  bundle: `export const installBundledClient=async()=>{};export const bundledClientUpdate=async()=>({});`,
- discord: `export const setDiscordActivity=async()=>{};`,
+ discord: `export const setDiscordActivity=async()=>{if(globalThis.__velaVerify.discordStalled)return new Promise(()=>{});};`,
 };
 const compiled = resolve(".verification/runtime-tests.mjs");
 await mkdir(resolve(".verification"), { recursive: true });

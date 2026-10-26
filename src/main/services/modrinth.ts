@@ -1581,31 +1581,38 @@ export function revealShaderPack(filename: string): Promise<void> {
   return revealPack("shader", filename);
 }
 
+/**
+ * Jars Modrinth does not know (local builds such as Vela, private mods). Looking
+ * them up again on every listing hashed the file and waited on the network each
+ * time; one miss per launcher session is enough.
+ */
+const catalogMisses = new Set<string>();
+
 export async function listInstalled(
   enrichCatalogMetadata = true,
 ): Promise<InstalledMod[]> {
   const dir = await modsDir();
   if (!existsSync(dir)) return [];
   const metadata = await readMetadata(dir);
-  const files = await fs.readdir(dir);
-  const result: InstalledMod[] = [];
-  for (const filenameOnDisk of files) {
-    if (
-      !filenameOnDisk.endsWith(".jar") &&
-      !filenameOnDisk.endsWith(".jar.disabled")
-    )
-      continue;
-    const filename = filenameOnDisk.replace(/\.disabled$/, "");
-    result.push({
-      filename,
-      size: (await fs.stat(join(dir, filenameOnDisk))).size,
-      enabled: !filenameOnDisk.endsWith(".disabled"),
-      ...metadata[filename],
-    });
-  }
+  const files = (await fs.readdir(dir)).filter(
+    (name) => name.endsWith(".jar") || name.endsWith(".jar.disabled"),
+  );
+  const result: InstalledMod[] = await Promise.all(
+    files.map(async (filenameOnDisk) => {
+      const filename = filenameOnDisk.replace(/\.disabled$/, "");
+      return {
+        filename,
+        size: (await fs.stat(join(dir, filenameOnDisk))).size,
+        enabled: !filenameOnDisk.endsWith(".disabled"),
+        ...metadata[filename],
+      };
+    }),
+  );
   let metadataChanged = false;
   for (const mod of enrichCatalogMetadata ? result : []) {
     if (mod.iconUrl && mod.description) continue;
+    const missKey = `${mod.filename}:${mod.size}`;
+    if (catalogMisses.has(missKey)) continue;
     try {
       let projectId = mod.projectId;
       let versionNumber = mod.versionNumber;
@@ -1648,6 +1655,7 @@ export async function listInstalled(
       metadataChanged = true;
     } catch {
       // A local/private jar is still a valid installed mod; it simply has no catalog metadata.
+      catalogMisses.add(`${mod.filename}:${mod.size}`);
     }
   }
   if (metadataChanged) await writeMetadata(dir, metadata);

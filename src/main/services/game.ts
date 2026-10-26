@@ -4,7 +4,7 @@ import { dirname, join } from "path";
 import { totalmem } from "os";
 import { exec, type ChildProcess } from "child_process";
 import { promisify } from "util";
-import { BrowserWindow } from "electron";
+import { app, BrowserWindow } from "electron";
 import {
   MinecraftFolder,
   Version,
@@ -42,6 +42,7 @@ import {
 import { setDiscordActivity } from "./discord";
 import { bundledClientUpdate, installBundledClient } from "./bundled-client";
 import { syncAppearanceManifest } from "./appearance-export";
+import { clientRuntimeArgs } from "./client-runtime";
 import {
   fetchWithRetry,
   resilientDownloadDispatcher,
@@ -775,10 +776,10 @@ export async function launchGame(account: StoredAccount): Promise<void> {
     }
 
     emitLaunch({ state: "launching", message: "Подготовка запуска" });
-    await setDiscordActivity({
+    void setDiscordActivity({
       details: "Запускает Vela",
       state: `Minecraft ${GAME.minecraftVersion}`,
-    });
+    }).catch(() => {});
     if (cancelled()) return;
     if (state.settings.preLaunchCommand.trim()) {
       emitLaunch({
@@ -861,6 +862,7 @@ export async function launchGame(account: StoredAccount): Promise<void> {
       ? ["-Dvela.launcher.devMode=true"]
       : [];
     const { independentSpawn } = await import('./independent-process');
+    await (await import('./graphics-default')).initializeGraphicsOnce(dir);
     const process = await launch({
       spawn: independentSpawn(join(dir, 'logs', 'launcher')) as typeof import('node:child_process').spawn,
       gamePath: dir,
@@ -869,7 +871,7 @@ export async function launchGame(account: StoredAccount): Promise<void> {
       version: resolved,
       minMemory,
       maxMemory,
-      extraJVMArgs: [...splitArgs(state.settings.jvmArgs), ...developerJvmArgs, `-Dvela.appearance.manifest=${appearanceManifest}`],
+      extraJVMArgs: clientRuntimeArgs(dir, [...splitArgs(state.settings.jvmArgs), ...developerJvmArgs, `-Dvela.appearance.manifest=${appearanceManifest}`]),
       extraMCArgs: splitArgs(state.settings.minecraftArgs),
       extraExecOption: { env: environment, windowsHide: true },
       prechecks,
@@ -940,10 +942,7 @@ export async function launchGame(account: StoredAccount): Promise<void> {
         state: account.username,
         startedAt: Date.now(),
       });
-      if (state.settings.closeOnLaunch && launcherWindow) {
-        launcherHidden = true;
-        launcherWindow.hide();
-      }
+      setTimeout(() => app.quit(), 350);
     });
     watcher.on("error", (error) => {
       runningProcesses.delete(process);

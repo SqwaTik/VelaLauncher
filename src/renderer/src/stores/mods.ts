@@ -129,19 +129,45 @@ export const useModsStore = defineStore("mods", () => {
     }
   }
 
+  /**
+   * Switching is a file rename, so the UI flips at once and only reverts if the
+   * rename fails. Reloading the whole list here used to re-identify every
+   * unknown jar on Modrinth, which made each switch take seconds.
+   */
+  function setEnabled(filenames: Set<string>, enabled: boolean): void {
+    installed.value = installed.value.map((mod) =>
+      filenames.has(mod.filename) ? { ...mod, enabled } : mod,
+    );
+  }
+
   async function toggle(mod: InstalledMod): Promise<void> {
-    await window.royale.mods.toggle(mod.filename, !mod.enabled);
-    await loadInstalled();
+    const enabled = !mod.enabled;
+    const names = new Set([mod.filename]);
+    setEnabled(names, enabled);
+    try {
+      await window.royale.mods.toggle(mod.filename, enabled);
+    } catch (e) {
+      setEnabled(names, !enabled);
+      error.value = cleanError(e);
+    }
   }
 
   async function toggleMany(
     items: InstalledMod[],
     enabled: boolean,
   ): Promise<void> {
-    await Promise.all(
+    setEnabled(new Set(items.map((item) => item.filename)), enabled);
+    const results = await Promise.allSettled(
       items.map((item) => window.royale.mods.toggle(item.filename, enabled)),
     );
-    await loadInstalled();
+    const failed = items.filter((_, i) => results[i].status === "rejected");
+    if (failed.length) {
+      setEnabled(new Set(failed.map((item) => item.filename)), !enabled);
+      const reason = results.find((r) => r.status === "rejected") as
+        | PromiseRejectedResult
+        | undefined;
+      error.value = cleanError(reason?.reason);
+    }
   }
 
   async function remove(mod: InstalledMod): Promise<void> {

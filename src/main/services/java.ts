@@ -100,6 +100,15 @@ export async function detectJava(
   preferred?: string | null,
 ): Promise<JavaInfo | null> {
   const managed = await managedJavaExecutable();
+  const checked = new Set<string>();
+  let fallback: JavaInfo | null = null;
+  for (const javaPath of [preferred, managed]) {
+    if (!javaPath || checked.has(javaPath)) continue;
+    checked.add(javaPath);
+    const info = await probe(javaPath);
+    if (info?.valid) return info;
+    fallback ??= info;
+  }
   const expanded = [...candidates(preferred, managed)];
   for (const root of [
     join(process.env.ProgramFiles ?? "C:\\Program Files", "Eclipse Adoptium"),
@@ -108,8 +117,8 @@ export async function detectJava(
   ])
     expanded.push(...(await discoverNested(root)));
 
-  let fallback: JavaInfo | null = null;
   for (const javaPath of [...new Set(expanded)]) {
+    if (checked.has(javaPath)) continue;
     const info = await probe(javaPath);
     if (!info) continue;
     if (info.valid) return info;

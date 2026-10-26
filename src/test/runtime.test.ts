@@ -7,6 +7,7 @@ import { decodeAppearancePng, syncAppearanceManifest } from "../main/services/ap
 import { bundledClientUpdate, installBundledClient } from "../main/services/bundled-client";
 import { launchGame, cancelLaunch, gameOperationBusy } from "../main/services/game";
 import { isTransientNetworkError } from "../main/services/network";
+import { clientRuntimeJar, clientRuntimeArgs } from "../main/services/client-runtime";
 
 const t=(globalThis as any).__velaVerify;
 let checks=0;
@@ -49,21 +50,39 @@ await check("cosmetic manifest never contains credentials and supports every pro
  await saveAccounts([account],account.id);
  const state=await loadState();assert((await fs.readFile(join(state.settings.storagePath,"appearance","manifest.json"),"utf8")).includes("capeHidden"));
 });
-await check("bundle installs Vela 0.1.8 and IAS 26.2 and repairs modified bytes",async()=>{
+await check("bundle installs current Vela and IAS 26.2 and repairs modified bytes",async()=>{
  const root=join(t.root,"bundle");
  await installBundledClient(root);
  assert.equal((await bundledClientUpdate(root)).available,false);
  const jars=await fs.readdir(join(root,"mods"));
- assert(jars.some(name=>name.includes("vela-client-0.1.8")));assert(jars.includes("IAS-9.0.7+26.2-fabric.jar"));
- const vela=jars.find(name=>name.startsWith("vela-client"))!;
- await fs.writeFile(join(root,"mods",vela),"broken");
+ assert(!jars.some(name=>name.startsWith("vela-client")));assert(jars.includes("IAS-9.0.7+26.2-fabric.jar"));
+ await fs.copyFile(clientRuntimeJar(root),join(root,"mods","renamed-legacy-client.jar"));
+ await installBundledClient(root);
+ assert(!(await fs.readdir(join(root,"mods"))).includes("renamed-legacy-client.jar"));
+ await fs.writeFile(clientRuntimeJar(root),"broken");
  assert.equal((await bundledClientUpdate(root)).available,true);
  await installBundledClient(root);assert.equal((await bundledClientUpdate(root)).available,false);
  assert((await fs.readdir(join(root,"mod-backups"))).length>0);
 });
+await check("runtime JVM argument preserves extra mods and is idempotent",()=>{
+ const root=join(t.root,"path with spaces");
+ const initial=["-Xmx4G","-Dfabric.addMods=external.jar"];
+ const args=clientRuntimeArgs(root,initial);
+ assert.deepEqual(clientRuntimeArgs(root,args),args);
+ assert(args.includes("-Xmx4G"));assert(args.some(a=>a.includes("external.jar")&&a.includes(clientRuntimeJar(root))));
+});
 const state=await loadState();await fs.mkdir(state.settings.storagePath,{recursive:true});
 await fs.writeFile(join(state.settings.storagePath,"profile.json"),JSON.stringify({velaProfileVersion:1,inheritsFrom:"26.2"}));
 await fs.writeFile(join(state.settings.storagePath,"game.jar"),"test fixture");
+await check("unresponsive Discord cannot block game preparation",async()=>{
+ t.discordStalled=true;
+ let timer:ReturnType<typeof setTimeout>;
+ try {
+  await Promise.race([launchGame(account),new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error("Discord blocked launch")),5000);})]);
+  assert.equal(t.children.length,1);
+  await cancelLaunch();t.children.length=0;
+ } finally {clearTimeout(timer!);t.discordStalled=false;}
+});
 await check("second process starts, first exit does not hide the second",async()=>{
  await launchGame(account);assert(gameOperationBusy());assert.equal(t.children.length,1);
  await assert.rejects(()=>launchGame(account),/уже выполняется/);

@@ -280,7 +280,7 @@ onBeforeUnmount(() => {
           </span>
           <span class="instance-copy"
             ><b>{{ instance.name }}</b
-            ><small>Minecraft {{ instance.minecraftVersion }}</small></span
+            ><small>Vela {{ instance.minecraftVersion }}</small></span
           >
           <span
             class="instance-more"

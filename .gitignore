@@ -9,3 +9,8 @@ dist/
 .env
 .env.*
 !.env.example
+
+# Local install backups and generated bundles (kept on disk, not in history)
+build/client-backups/
+build/installed-*/
+build/vela-client-source.zip
