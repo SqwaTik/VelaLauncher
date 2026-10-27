@@ -22,9 +22,12 @@ async function loadBundle() {
     const source = join(resourceRoot(), entry.resource);
     const bytes = await fs.readFile(source);
     const metadata = JSON.parse(await readArchiveText(source, "fabric.mod.json") ?? "null");
-    if (metadata?.id !== entry.id || metadata?.version !== entry.version || !JSON.stringify(metadata?.depends?.minecraft).includes(GAME.minecraftVersion))
+    // The Vela client ships inside the launcher, so its own fabric.mod.json is the source of its version; only the
+    // id and the Minecraft dependency are verified. Pinning the version here broke launching after every client bump.
+    const versionOk = entry.id === "velaclient" ? typeof metadata?.version === "string" && metadata.version.length > 0 : metadata?.version === entry.version;
+    if (metadata?.id !== entry.id || !versionOk || !JSON.stringify(metadata?.depends?.minecraft).includes(GAME.minecraftVersion))
       throw new Error(`Пакет ${entry.resource} не соответствует Minecraft ${GAME.minecraftVersion}. Переустановите Vela Launcher.`);
-    return { ...entry, source, bytes, hash: sha256(bytes) };
+    return { ...entry, version: String(metadata.version), source, bytes, hash: sha256(bytes) };
   }));
 }
 
@@ -33,7 +36,7 @@ export async function bundledClientUpdate(root: string): Promise<ClientUpdateInf
   const hash = await fs.readFile(clientRuntimeJar(root)).then(sha256).catch(() => null);
   return {
     checkedAt: Date.now(), available: hash !== client.hash, installed: hash !== null,
-    localCommitSha: hash, remoteCommitSha: client.hash, remoteVersion: GAME.clientVersion,
+    localCommitSha: hash, remoteCommitSha: client.hash, remoteVersion: client.version,
     commitMessage: null, commitDate: null, delivery: "release",
   };
 }
@@ -84,7 +87,7 @@ export async function installBundledClient(root: string): Promise<void> {
     const metadata = join(root, ".vela-client.json");
     const temporary = `${metadata}.${randomUUID()}.tmp`;
     stages.push(temporary);
-    await fs.writeFile(temporary, JSON.stringify({ version: GAME.clientVersion, minecraft: GAME.minecraftVersion, files: releases.map(({ filename, hash }) => ({ filename, sha256: hash })) }, null, 2));
+    await fs.writeFile(temporary, JSON.stringify({ version: releases[0].version, minecraft: GAME.minecraftVersion, files: releases.map(({ filename, hash }) => ({ filename, sha256: hash })) }, null, 2));
     await fs.rename(temporary, metadata);
   } catch (error) {
     for (const target of created) await fs.rm(target, { force: true });
