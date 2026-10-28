@@ -4,7 +4,7 @@ import { dirname, join } from "path";
 import { totalmem } from "os";
 import { exec, type ChildProcess } from "child_process";
 import { promisify } from "util";
-import { app, BrowserWindow } from "electron";
+import { BrowserWindow } from "electron";
 import {
   MinecraftFolder,
   Version,
@@ -963,7 +963,11 @@ export async function launchGame(account: StoredAccount): Promise<void> {
         state: account.username,
         startedAt: Date.now(),
       });
-      setTimeout(() => app.quit(), 350);
+      // "Hide the launcher while playing": hide once the game window is up, show it again on exit (below).
+      if (state.settings.closeOnLaunch && launcherWindow) {
+        launcherHidden = true;
+        launcherWindow.hide();
+      }
     });
     watcher.on("error", (error) => {
       runningProcesses.delete(process);
