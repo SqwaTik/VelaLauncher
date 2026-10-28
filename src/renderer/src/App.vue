@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, watchEffect } from "vue";
 import { useRouter } from "vue-router";
 import TitleBar from "./components/TitleBar.vue";
 import SideBar from "./components/SideBar.vue";
@@ -24,6 +24,27 @@ const showOnboarding = computed(
   () => ready.value && settings.settings?.onboardingCompleted === false,
 );
 const navigating = ref(false);
+// While Minecraft runs or the window is minimised the launcher only has to wait: the background video and the
+// decorative animations stop, so the GPU and CPU go to the game.
+const windowHidden = ref(document.hidden);
+const quiet = computed(() => windowHidden.value || launcher.runningCount > 0);
+const videoBackground = computed(
+  () => Boolean(settings.backgroundUrl) && settings.backgroundKind === "video",
+);
+const backgroundVideo = ref<HTMLVideoElement | null>(null);
+function syncVisibility(): void {
+  windowHidden.value = document.hidden;
+}
+// On <html>, so dialogs teleported to <body> follow too (main.scss).
+watchEffect(() => {
+  document.documentElement.classList.toggle("video-bg", videoBackground.value);
+  document.documentElement.classList.toggle("quiet", quiet.value);
+});
+watch([quiet, backgroundVideo], ([isQuiet, video]) => {
+  if (!video) return;
+  if (isQuiet) video.pause();
+  else void video.play().catch(() => undefined);
+});
 let navigationTimer: ReturnType<typeof setTimeout> | null = null;
 let navigationDoneTimer: ReturnType<typeof setTimeout> | null = null;
 let removeOpenModpackListener: (() => void) | null = null;
@@ -82,6 +103,7 @@ onMounted(async () => {
     void settings.detectJava();
     void settings.checkLauncherUpdate();
     window.addEventListener("royale:instance-changed", refreshActiveInstance);
+    document.addEventListener("visibilitychange", syncVisibility);
   } finally {
     ready.value = true;
   }
@@ -93,6 +115,7 @@ onBeforeUnmount(() => {
   if (navigationDoneTimer) clearTimeout(navigationDoneTimer);
   removeOpenModpackListener?.();
   window.removeEventListener("royale:instance-changed", refreshActiveInstance);
+  document.removeEventListener("visibilitychange", syncVisibility);
 });
 </script>
 
@@ -104,6 +127,7 @@ onBeforeUnmount(() => {
     <div class="background-media" aria-hidden="true">
       <video
         v-if="settings.backgroundUrl && settings.backgroundKind === 'video'"
+        ref="backgroundVideo"
         :key="settings.backgroundUrl"
         :src="settings.backgroundUrl"
         autoplay
@@ -138,7 +162,10 @@ onBeforeUnmount(() => {
         </Transition>
         <RouterView v-slot="{ Component }">
           <Transition name="slide" mode="out-in" appear>
-            <component :is="Component" :key="$route.fullPath" />
+            <!-- The account page keeps its 3D skin viewer (a WebGL context and compiled shaders) between visits. -->
+            <KeepAlive include="AccountView">
+              <component :is="Component" :key="$route.fullPath" />
+            </KeepAlive>
           </Transition>
         </RouterView>
       </main>

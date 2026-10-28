@@ -99,13 +99,13 @@ function createGameLogWindow(): BrowserWindow {
 <html lang="ru"><head><meta charset="utf-8"><title>Журнал Minecraft</title>
 <style>
 *{box-sizing:border-box}html,body{margin:0;height:100%;background:#0c0e15;color:#d7e0d9;font:13px/1.55 "Cascadia Mono",Consolas,monospace}
-header{position:sticky;top:0;display:flex;align-items:center;gap:10px;height:48px;padding:0 18px;background:#11141eef;border-bottom:1px solid #282d40;backdrop-filter:blur(14px)}
+header{position:sticky;top:0;display:flex;align-items:center;gap:10px;height:48px;padding:0 18px;background:#11141e;border-bottom:1px solid #282d40}
 header i{width:8px;height:8px;border-radius:50%;background:#7668ff;box-shadow:0 0 14px #7668ff}header b{font:600 13px/1 system-ui;color:#f4f3ff}
 pre{min-height:calc(100% - 48px);margin:0;padding:16px 18px 28px;white-space:pre-wrap;overflow-wrap:anywhere}
 .stderr{color:#ff9b9b}.system{color:#43c7f4}
 </style></head><body><header><i></i><b>Vela · журнал запуска</b></header><pre id="log"><span class="system">Подготовка процесса Minecraft…</span>\n</pre>
 <script>
-window.appendRoyaleLog=(text,kind)=>{const log=document.getElementById("log");const line=document.createElement("span");line.className=kind||"";line.textContent=text;log.appendChild(line);window.scrollTo({top:document.body.scrollHeight,behavior:"instant"})}
+window.appendRoyaleLogs=(entries)=>{const log=document.getElementById("log");const follow=window.innerHeight+window.scrollY>=document.body.scrollHeight-40;const fragment=document.createDocumentFragment();for(const [text,kind] of entries){const line=document.createElement("span");line.className=kind||"";line.textContent=text;fragment.appendChild(line)}log.appendChild(fragment);while(log.childNodes.length>4000)log.removeChild(log.firstChild);if(follow)window.scrollTo({top:document.body.scrollHeight,behavior:"instant"})}
 </script></body></html>`;
   pendingGameLogs.set(window, []);
   void window.loadURL(
@@ -120,6 +120,11 @@ window.appendRoyaleLog=(text,kind)=>{const log=document.getElementById("log");co
   return window;
 }
 
+/**
+ * Minecraft can print thousands of lines a second at startup. Lines are buffered and sent to the log window in one
+ * script call every 120 ms; the window keeps the newest 4000 and follows the end only while it is scrolled there.
+ */
+const gameLogBuffers = new Map<BrowserWindow, { entries: [string, string][]; timer: ReturnType<typeof setTimeout> | null }>();
 function appendGameLog(
   window: BrowserWindow | null,
   text: string,
@@ -131,12 +136,28 @@ function appendGameLog(
     pending.push({ text, kind });
     return;
   }
-  void window.webContents
-    .executeJavaScript(
-      `window.appendRoyaleLog?.(${JSON.stringify(text)},${JSON.stringify(kind)})`,
-      true,
-    )
-    .catch(() => undefined);
+  let buffer = gameLogBuffers.get(window);
+  if (!buffer) {
+    buffer = { entries: [], timer: null };
+    gameLogBuffers.set(window, buffer);
+    window.once("closed", () => {
+      const closing = gameLogBuffers.get(window);
+      if (closing?.timer) clearTimeout(closing.timer);
+      gameLogBuffers.delete(window);
+    });
+  }
+  buffer.entries.push([text, kind]);
+  if (buffer.entries.length > 4000) buffer.entries.splice(0, buffer.entries.length - 4000);
+  if (buffer.timer) return;
+  const target = buffer;
+  target.timer = setTimeout(() => {
+    target.timer = null;
+    const entries = target.entries.splice(0);
+    if (window.isDestroyed() || entries.length === 0) return;
+    void window.webContents
+      .executeJavaScript(`window.appendRoyaleLogs?.(${JSON.stringify(entries)})`, true)
+      .catch(() => undefined);
+  }, 120);
 }
 
 function report(
@@ -864,7 +885,7 @@ export async function launchGame(account: StoredAccount): Promise<void> {
     const { independentSpawn } = await import('./independent-process');
     await (await import('./graphics-default')).initializeGraphicsOnce(dir);
     const process = await launch({
-      spawn: independentSpawn(join(dir, 'logs', 'launcher')) as typeof import('node:child_process').spawn,
+      spawn: independentSpawn(join(dir, 'logs', 'launcher')) as unknown as NonNullable<Parameters<typeof launch>[0]['spawn']>,
       gamePath: dir,
       resourcePath: dir,
       javaPath: java.path,

@@ -310,13 +310,15 @@ onBeforeUnmount(() => {
 
         <div class="setting-card media-setting">
           <div class="media-preview" :class="{ empty: !store.backgroundUrl }">
+            <!-- A second decoder for the same video is not free: the preview plays only under the cursor. -->
             <video
               v-if="store.backgroundUrl && store.backgroundKind === 'video'"
               :src="store.backgroundUrl"
-              autoplay
               muted
               loop
-              preload="auto"
+              preload="metadata"
+              @pointerenter="($event.target as HTMLVideoElement).play().catch(() => undefined)"
+              @pointerleave="($event.target as HTMLVideoElement).pause()"
               :style="{ objectFit: settings.backgroundFit }"
               @error="store.backgroundFailed()"
             />

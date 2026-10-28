@@ -1,5 +1,5 @@
 import { app, shell, BrowserWindow, protocol } from "electron";
-import { createReadStream } from "fs";
+import { createReadStream, readFileSync } from "fs";
 import { stat } from "fs/promises";
 import { join, normalize, relative, extname } from "path";
 import { Readable } from "stream";
@@ -20,6 +20,17 @@ protocol.registerSchemesAsPrivileged([
     },
   },
 ]);
+
+// Laptops with two GPUs give an Electron app the integrated one by default, where the blurred, animated interface
+// stutters. With "dedicated GPU" on (the default), the launcher asks for the fast GPU too. Chromium reads this switch
+// before startup, so the setting comes straight from the config file.
+try {
+  const config = JSON.parse(readFileSync(join(app.getPath("userData"), "vela-config.json"), "utf-8"));
+  if ((config?.settings ?? config)?.gpuDedicated !== false)
+    app.commandLine.appendSwitch("force_high_performance_gpu");
+} catch {
+  app.commandLine.appendSwitch("force_high_performance_gpu");
+}
 
 let mainWindow: BrowserWindow | null = null;
 let pendingModpackPath: string | null =

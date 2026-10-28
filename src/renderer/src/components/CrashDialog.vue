@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import Icon from "./Icon.vue";
 import { useLauncherStore } from "@/stores/launcher";
 
@@ -19,12 +19,21 @@ const summary = computed(() => {
 });
 
 async function copyReport(): Promise<void> {
-  await navigator.clipboard.writeText(
-    launcher.crash?.crashReport || summary.value,
-  );
+  try {
+    await navigator.clipboard.writeText(
+      launcher.crash?.crashReport || summary.value,
+    );
+  } catch {
+    return; // the window lost focus: nothing copied, nothing to confirm
+  }
   copied.value = true;
   setTimeout(() => (copied.value = false), 1400);
 }
+function onKey(event: KeyboardEvent): void {
+  if (event.key === "Escape" && launcher.crash) launcher.dismissCrash();
+}
+onMounted(() => window.addEventListener("keydown", onKey));
+onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
 </script>
 
 <template>

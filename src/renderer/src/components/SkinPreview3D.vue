@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from "vue";
+import { useLauncherStore } from "../stores/launcher";
 import type { SkinViewer } from "skinview3d";
 import { MOUSE, Mesh, Raycaster, Vector2 } from "three";
 import type { Object3D } from "three";
@@ -225,7 +226,17 @@ onMounted(async () => {
   await loadSkin(props.skin);
   await loadCape(props.cape);
   loading.value = false;
+  viewer.renderPaused = paused.value;
 });
+// Kept alive with the account page: render only while the page is shown and the game is not running.
+const launcher = useLauncherStore();
+const shown = ref(true);
+const paused = computed(() => !shown.value || launcher.runningCount > 0);
+watch(paused, (value) => {
+  if (viewer) viewer.renderPaused = value;
+});
+onActivated(() => (shown.value = true));
+onDeactivated(() => (shown.value = false));
 onBeforeUnmount(() => {
   disposed = true;
   resizeObserver?.disconnect();

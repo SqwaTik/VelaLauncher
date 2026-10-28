@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { onBeforeUnmount, onMounted, ref } from "vue";
 import Icon from "./Icon.vue";
 
 withDefaults(
@@ -13,6 +13,12 @@ withDefaults(
 );
 const emit = defineEmits<{ confirm: [dontAskAgain: boolean]; cancel: [] }>();
 const dontAsk = ref(false);
+function onKey(event: KeyboardEvent): void {
+  if (event.key === "Escape") emit("cancel");
+  else if (event.key === "Enter") emit("confirm", dontAsk.value);
+}
+onMounted(() => window.addEventListener("keydown", onKey));
+onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
 </script>
 
 <template>

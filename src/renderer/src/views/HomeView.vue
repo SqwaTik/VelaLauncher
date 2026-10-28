@@ -219,6 +219,9 @@ function russianCount(
           : many;
   return `${count} ${word}`;
 }
+function refreshOnFocus(): void {
+  void settings.refreshGameContent();
+}
 onMounted(() => {
   void settings.refreshGameContent();
   void Promise.allSettled([
@@ -230,17 +233,18 @@ onMounted(() => {
   carouselTimer = setInterval(() => {
     if (!galleryHovered.value) moveSlide(1);
   }, 6000);
-  // Minecraft can add an F2 screenshot while the launcher stays open.
-  // Refreshing the lightweight directory summary keeps the gallery live.
-  contentRefreshTimer = setInterval(
-    () => void settings.refreshGameContent(),
-    4000,
-  );
+  // Minecraft can add an F2 screenshot while the launcher stays open. Refresh the summary while someone can see
+  // it, and right away when the window comes back; a minimised launcher does not scan folders.
+  contentRefreshTimer = setInterval(() => {
+    if (!document.hidden) void settings.refreshGameContent();
+  }, 8000);
+  window.addEventListener("focus", refreshOnFocus);
 });
 onBeforeUnmount(() => {
   hideRunningMenu();
   if (carouselTimer) clearInterval(carouselTimer);
   if (contentRefreshTimer) clearInterval(contentRefreshTimer);
+  window.removeEventListener("focus", refreshOnFocus);
   cancelAnimationFrame(logoInertiaFrame);
 });
 </script>

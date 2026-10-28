@@ -45,7 +45,40 @@ function isNewer(latest: string, current: string): boolean {
   return false;
 }
 
-export async function checkLauncherUpdate(): Promise<LauncherUpdateInfo> {
+// GitHub allows 60 unauthenticated API calls an hour per IP. The result is kept on disk for six hours, and a rate
+// limit (403/429) means "unknown for now", not a broken update server: the cached answer or "no update" is shown.
+const CHECK_TTL_MS = 6 * 60 * 60 * 1000;
+function cacheFile(): string {
+  return join(app.getPath("userData"), "launcher-update-check.json");
+}
+async function readCachedCheck(): Promise<{ at: number; info: LauncherUpdateInfo } | null> {
+  try {
+    const cached = JSON.parse(await fs.readFile(cacheFile(), "utf8"));
+    return cached?.info?.currentVersion === app.getVersion() ? cached : null;
+  } catch {
+    return null;
+  }
+}
+function noUpdate(currentVersion: string): LauncherUpdateInfo {
+  return {
+    currentVersion,
+    latestVersion: currentVersion,
+    available: false,
+    releaseUrl: RELEASES_URL,
+    downloadUrl: null,
+    publishedAt: null,
+  };
+}
+
+export async function checkLauncherUpdate(force = false): Promise<LauncherUpdateInfo> {
+  const cached = await readCachedCheck();
+  if (!force && cached && Date.now() - cached.at < CHECK_TTL_MS) return cached.info;
+  const info = await fetchLauncherUpdate(cached?.info ?? null);
+  await fs.writeFile(cacheFile(), JSON.stringify({ at: Date.now(), info })).catch(() => undefined);
+  return info;
+}
+
+async function fetchLauncherUpdate(fallback: LauncherUpdateInfo | null): Promise<LauncherUpdateInfo> {
   const currentVersion = app.getVersion();
   const response = await fetchWithRetry(
     `https://api.github.com/repos/${REPOSITORY}/releases/latest`,
@@ -55,7 +88,12 @@ export async function checkLauncherUpdate(): Promise<LauncherUpdateInfo> {
         "User-Agent": USER_AGENT,
       },
     },
+    1, // a retry of a rate-limited call only spends more of the hourly quota
   );
+  if (response.status === 403 || response.status === 429) {
+    await response.body?.cancel().catch(() => undefined);
+    return fallback ?? noUpdate(currentVersion);
+  }
   if (response.status === 404) {
     return {
       currentVersion,
@@ -174,7 +212,7 @@ async function downloadInstaller(
 export async function installLauncherUpdate(): Promise<void> {
   if (!app.isPackaged)
     throw new Error("Автообновление доступно в установленной версии лаунчера.");
-  const update = await checkLauncherUpdate();
+  const update = await checkLauncherUpdate(true);
   if (!update.available)
     throw new Error("У вас уже установлена актуальная версия лаунчера.");
   if (!update.downloadUrl)

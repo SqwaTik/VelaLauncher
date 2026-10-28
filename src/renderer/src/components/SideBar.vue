@@ -18,6 +18,22 @@ const instances = useInstancesStore();
 const mods = useModsStore();
 const { tr } = useLocale();
 const expanded = ref(false);
+// Layout width, separate from the visual reveal: it switches once per hover, while the panel itself slides with a
+// transform. Animating the width relaid out and repainted the whole sidebar (and its big shadow) every frame.
+const wide = ref(false);
+let wideTimer: ReturnType<typeof setTimeout> | null = null;
+function setExpanded(value: boolean): void {
+  if (wideTimer) clearTimeout(wideTimer);
+  if (value) {
+    wide.value = true;
+    requestAnimationFrame(() => (expanded.value = true));
+  } else {
+    expanded.value = false;
+    wideTimer = setTimeout(() => {
+      if (!expanded.value) wide.value = false;
+    }, 280);
+  }
+}
 const createOpen = ref(false);
 const editorOpen = ref(false);
 const editingId = ref<string | null>(null);
@@ -71,12 +87,12 @@ function isActive(path: string): boolean {
 
 function scheduleExpanded(value: boolean): void {
   if (hoverTimer) clearTimeout(hoverTimer);
-  hoverTimer = setTimeout(() => (expanded.value = value), value ? 105 : 260);
+  hoverTimer = setTimeout(() => setExpanded(value), value ? 105 : 260);
 }
 
 function collapse(): void {
   if (hoverTimer) clearTimeout(hoverTimer);
-  expanded.value = false;
+  setExpanded(false);
 }
 
 function focusOut(event: FocusEvent): void {
@@ -202,7 +218,7 @@ onBeforeUnmount(() => {
   <div class="sidebar-slot">
     <aside
       class="sidebar"
-      :class="{ expanded }"
+      :class="{ expanded, wide }"
       @pointerenter="scheduleExpanded(true)"
       @pointerleave="scheduleExpanded(false)"
       @focusin="scheduleExpanded(true)"
@@ -602,20 +618,48 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 6px;
   padding: 9px 8px 12px;
-  overflow: hidden;
+  // Clips the contents like before, but leaves room for the panel's shadow to the right.
+  overflow: clip;
+  overflow-clip-margin: 72px;
   z-index: 1;
+}
+.sidebar.wide {
+  width: var(--sidebar-w-open);
+}
+// The panel and its shadow are full-width layers moved and faded by the compositor: no layout or repaint per frame.
+.sidebar::before,
+.sidebar::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--sidebar-w-open);
+  z-index: -1;
+  pointer-events: none;
+  transform: translateX(calc(var(--sidebar-w) - var(--sidebar-w-open)));
+  transition: transform 0.27s var(--ease);
+  will-change: transform;
+}
+.sidebar::before {
   background: var(--surface-1);
   border-right: 1px solid var(--hairline);
-  will-change: width, box-shadow;
-  transition:
-    width 0.27s var(--ease),
-    box-shadow 0.27s var(--ease),
-    background 0.2s var(--ease);
 }
-.sidebar.expanded {
-  width: var(--sidebar-w-open);
-  background: #11131d;
+.sidebar::after {
+  z-index: -2;
   box-shadow: 22px 0 48px rgba(0, 0, 0, 0.42);
+  opacity: 0;
+  transition:
+    transform 0.27s var(--ease),
+    opacity 0.27s var(--ease);
+}
+.sidebar.expanded::before,
+.sidebar.expanded::after {
+  transform: none;
+}
+.sidebar.expanded::before {
+  background: #11131d;
+}
+.sidebar.expanded::after {
+  opacity: 1;
 }
 
 .account-link,
@@ -691,18 +735,18 @@ onBeforeUnmount(() => {
   border-radius: 10px;
   image-rendering: pixelated;
 }
-.sidebar:not(.expanded) .account-link,
-.sidebar:not(.expanded) .nav-link,
-.sidebar:not(.expanded) .instance-link {
+.sidebar:not(.wide) .account-link,
+.sidebar:not(.wide) .nav-link,
+.sidebar:not(.wide) .instance-link {
   justify-content: center;
   padding-inline: 0;
   gap: 0;
 }
-.sidebar:not(.expanded) .account-copy,
-.sidebar:not(.expanded) .nav-copy,
-.sidebar:not(.expanded) .instance-copy,
-.sidebar:not(.expanded) .account-arrow,
-.sidebar:not(.expanded) .instance-more {
+.sidebar:not(.wide) .account-copy,
+.sidebar:not(.wide) .nav-copy,
+.sidebar:not(.wide) .instance-copy,
+.sidebar:not(.wide) .account-arrow,
+.sidebar:not(.wide) .instance-more {
   position: absolute;
   pointer-events: none;
 }

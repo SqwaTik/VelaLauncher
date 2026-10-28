@@ -187,7 +187,20 @@ export const useSettingsStore = defineStore("settings", () => {
     await saveNow();
   }
 
-  function backgroundFailed(): void {
+  async function backgroundFailed(): Promise<void> {
+    const url = backgroundUrl.value;
+    // A file that was deleted or moved fails on every start: forget it and fall back to the standard background.
+    if (url) {
+      const status = await fetch(url, { headers: { Range: "bytes=0-0" } })
+        .then((response) => response.status)
+        .catch(() => 0);
+      if (status === 404) {
+        await clearBackground();
+        backgroundError.value =
+          "Файл фона не найден — его удалили или переместили. Вернули стандартный фон.";
+        return;
+      }
+    }
     backgroundError.value =
       "Не удалось открыть этот файл. Проверьте, что он не перемещён и использует поддерживаемый кодек.";
   }

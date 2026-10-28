@@ -68,6 +68,32 @@ export async function contentSummary(): Promise<GameContentSummary> {
   };
 }
 
+// The home screen asks for this summary repeatedly; an icon is read and encoded again only when its file changed.
+const iconCache = new Map<string, { mtimeMs: number; dataUrl: string | null }>();
+async function worldIcon(iconPath: string): Promise<string | null> {
+  let mtimeMs: number;
+  let size: number;
+  try {
+    ({ mtimeMs, size } = await fs.stat(iconPath));
+  } catch {
+    iconCache.delete(iconPath);
+    return null; // a world icon is optional
+  }
+  const cached = iconCache.get(iconPath);
+  if (cached && cached.mtimeMs === mtimeMs) return cached.dataUrl;
+  let dataUrl: string | null = null;
+  if (size <= 2 * 1024 * 1024) {
+    try {
+      dataUrl = `data:image/png;base64,${(await fs.readFile(iconPath)).toString("base64")}`;
+    } catch {
+      dataUrl = null;
+    }
+  }
+  if (iconCache.size > 256) iconCache.clear();
+  iconCache.set(iconPath, { mtimeMs, dataUrl });
+  return dataUrl;
+}
+
 async function listWorldItems(root: string): Promise<GameContentItem[]> {
   try {
     const entries = (await fs.readdir(root, { withFileTypes: true }))
@@ -76,16 +102,7 @@ async function listWorldItems(root: string): Promise<GameContentItem[]> {
     return Promise.all(
       entries.map(async (entry) => {
         const iconPath = join(root, entry.name, "icon.png");
-        let iconDataUrl: string | null = null;
-        try {
-          const bytes = await fs.readFile(iconPath);
-          if (bytes.length <= 2 * 1024 * 1024) {
-            iconDataUrl = `data:image/png;base64,${bytes.toString("base64")}`;
-          }
-        } catch {
-          /* A world icon is optional. */
-        }
-        return { name: entry.name, iconDataUrl };
+        return { name: entry.name, iconDataUrl: await worldIcon(iconPath) };
       }),
     );
   } catch {
