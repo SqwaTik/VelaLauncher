@@ -25,8 +25,9 @@ let wideTimer: ReturnType<typeof setTimeout> | null = null;
 function setExpanded(value: boolean): void {
   if (wideTimer) clearTimeout(wideTimer);
   if (value) {
+    // Items keep the same layout in both widths, so widening and revealing can happen in the same frame.
     wide.value = true;
-    requestAnimationFrame(() => (expanded.value = true));
+    expanded.value = true;
   } else {
     expanded.value = false;
     wideTimer = setTimeout(() => {
@@ -87,7 +88,14 @@ function isActive(path: string): boolean {
 
 function scheduleExpanded(value: boolean): void {
   if (hoverTimer) clearTimeout(hoverTimer);
-  hoverTimer = setTimeout(() => setExpanded(value), value ? 105 : 260);
+  if (value === expanded.value) return;
+  hoverTimer = setTimeout(() => setExpanded(value), value ? 60 : 160);
+}
+
+// Only keyboard focus opens the rail: a mouse click focuses the item too, and that used to reopen it after collapse().
+function focusIn(event: FocusEvent): void {
+  if ((event.target as HTMLElement).matches?.(":focus-visible"))
+    scheduleExpanded(true);
 }
 
 function collapse(): void {
@@ -101,13 +109,19 @@ function focusOut(event: FocusEvent): void {
     scheduleExpanded(false);
 }
 
+// One pass per change of the list instead of two lookups per item on every render.
+const instanceIcons = computed(() => {
+  const icons = new Map<string, string>();
+  for (const instance of instances.instances)
+    icons.set(
+      instance.id,
+      instance.iconDataUrl ||
+        (instance.source === "default" ? generatedLogo : defaultInstanceIcon),
+    );
+  return icons;
+});
 function instanceIcon(instanceId: string): string | null {
-  const instance = instances.instances.find((item) => item.id === instanceId);
-  if (!instance) return null;
-  return (
-    instance.iconDataUrl ||
-    (instance.source === "default" ? generatedLogo : defaultInstanceIcon)
-  );
+  return instanceIcons.value.get(instanceId) ?? null;
 }
 
 async function selectInstance(id: string): Promise<void> {
@@ -221,7 +235,7 @@ onBeforeUnmount(() => {
       :class="{ expanded, wide }"
       @pointerenter="scheduleExpanded(true)"
       @pointerleave="scheduleExpanded(false)"
-      @focusin="scheduleExpanded(true)"
+      @focusin="focusIn"
       @focusout="focusOut"
     >
       <RouterLink
@@ -276,9 +290,10 @@ onBeforeUnmount(() => {
         >
           <span class="instance-avatar">
             <img
-              v-if="instanceIcon(instance.id)"
-              :src="instanceIcon(instance.id)!"
+              v-if="instanceIcons.get(instance.id)"
+              :src="instanceIcons.get(instance.id)"
               alt=""
+              decoding="async"
             />
             <i v-if="instance.pinned" class="pin-mark"
               ><Icon name="pin" :size="9"
@@ -617,7 +632,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 9px 8px 12px;
+  padding: 12px 8px 22px 16px;
   // Clips the contents like before, but leaves room for the panel's shadow to the right.
   overflow: clip;
   overflow-clip-margin: 72px;
@@ -639,11 +654,18 @@ onBeforeUnmount(() => {
   transition: transform 0.27s var(--ease);
   will-change: transform;
 }
+// A floating rail: rounded, inset from the window edges, no divider line.
 .sidebar::before {
-  background: var(--surface-1);
-  border-right: 1px solid var(--hairline);
+  inset: 2px auto 12px 10px;
+  width: calc(var(--sidebar-w-open) - 10px);
+  border-radius: 20px;
+  background: rgba(15, 19, 29, 0.86);
+  border: 1px solid var(--hairline);
 }
 .sidebar::after {
+  inset: 2px auto 12px 10px;
+  width: calc(var(--sidebar-w-open) - 10px);
+  border-radius: 20px;
   z-index: -2;
   box-shadow: 22px 0 48px rgba(0, 0, 0, 0.42);
   opacity: 0;
@@ -656,7 +678,8 @@ onBeforeUnmount(() => {
   transform: none;
 }
 .sidebar.expanded::before {
-  background: #11131d;
+  background: #121722;
+  border-color: var(--hairline-strong);
 }
 .sidebar.expanded::after {
   opacity: 1;
@@ -680,14 +703,14 @@ onBeforeUnmount(() => {
 .nav-link::before {
   content: "";
   position: absolute;
-  left: -8px;
+  left: -4px;
   top: 50%;
   width: 3px;
   height: 0;
-  border-radius: 0 4px 4px 0;
+  border-radius: 4px;
   transform: translateY(-50%);
   background: var(--green);
-  box-shadow: 0 0 12px rgba(118, 104, 255, 0.5);
+  box-shadow: 0 0 12px rgba(117, 108, 255, 0.5);
   transition: height 0.22s var(--ease);
 }
 .account-link:hover,
@@ -708,7 +731,8 @@ onBeforeUnmount(() => {
 
 .account-link {
   min-height: 66px;
-  padding: 0 6px;
+  // Icons sit exactly where centring them in the narrow rail would: nothing shifts when the rail widens.
+  padding: 0 6px 0 3px;
   gap: 11px;
 }
 .avatar-shell {
@@ -735,19 +759,11 @@ onBeforeUnmount(() => {
   border-radius: 10px;
   image-rendering: pixelated;
 }
-.sidebar:not(.wide) .account-link,
-.sidebar:not(.wide) .nav-link,
-.sidebar:not(.wide) .instance-link {
-  justify-content: center;
-  padding-inline: 0;
-  gap: 0;
-}
 .sidebar:not(.wide) .account-copy,
 .sidebar:not(.wide) .nav-copy,
 .sidebar:not(.wide) .instance-copy,
 .sidebar:not(.wide) .account-arrow,
 .sidebar:not(.wide) .instance-more {
-  position: absolute;
   pointer-events: none;
 }
 .account-link:hover .avatar-shell {
@@ -767,7 +783,7 @@ onBeforeUnmount(() => {
   border-radius: 50%;
   background: var(--green);
   border: 2px solid var(--surface-1);
-  box-shadow: 0 0 8px rgba(118, 104, 255, 0.7);
+  box-shadow: 0 0 8px rgba(117, 108, 255, 0.7);
 }
 .account-copy,
 .nav-copy {
@@ -841,7 +857,7 @@ onBeforeUnmount(() => {
   position: relative;
   width: 100%;
   min-height: 43px;
-  padding: 2px 7px;
+  padding: 2px 7px 2px 5.5px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -857,11 +873,11 @@ onBeforeUnmount(() => {
 .instance-link::before {
   content: "";
   position: absolute;
-  left: -8px;
+  left: -4px;
   top: 50%;
   width: 3px;
   height: 0;
-  border-radius: 0 3px 3px 0;
+  border-radius: 3px;
   transform: translateY(-50%);
   background: var(--green);
   transition: height 0.18s var(--ease);
@@ -872,7 +888,7 @@ onBeforeUnmount(() => {
 }
 .instance-link.active {
   color: var(--text-0);
-  background: rgba(118, 104, 255, 0.09);
+  background: rgba(117, 108, 255, 0.09);
 }
 .instance-link.active::before {
   height: 23px;
@@ -1016,7 +1032,7 @@ onBeforeUnmount(() => {
 }
 .nav-link {
   height: 50px;
-  padding: 0 7px;
+  padding: 0 7px 0 6px;
   gap: 11px;
 }
 .nav-icon {
@@ -1040,7 +1056,7 @@ onBeforeUnmount(() => {
 }
 .nav-link.active .nav-icon {
   color: var(--green);
-  background: rgba(118, 104, 255, 0.11);
+  background: rgba(117, 108, 255, 0.11);
 }
 .nav-copy b {
   color: inherit;
@@ -1062,7 +1078,7 @@ onBeforeUnmount(() => {
   padding: 6px;
   border-radius: 14px;
   color: var(--text-1);
-  background: rgba(17, 19, 29, 0.98);
+  background: rgba(18, 23, 34, 0.98);
   border: 1px solid var(--hairline-strong);
   box-shadow: 0 20px 70px rgba(0, 0, 0, 0.55);
   backdrop-filter: blur(18px);
@@ -1118,7 +1134,7 @@ onBeforeUnmount(() => {
   display: grid;
   place-items: center;
   padding: 20px;
-  background: rgba(7, 8, 17, 0.74);
+  background: rgba(8, 10, 18, 0.74);
   backdrop-filter: blur(10px);
 }
 .instance-modal {
@@ -1211,7 +1227,7 @@ onBeforeUnmount(() => {
 .instance-name-field input:focus,
 .instance-version-select:focus-within {
   border-color: var(--green-line);
-  box-shadow: 0 0 0 3px rgba(118, 104, 255, 0.1);
+  box-shadow: 0 0 0 3px rgba(117, 108, 255, 0.1);
 }
 .instance-version-select {
   position: relative;
@@ -1312,7 +1328,7 @@ onBeforeUnmount(() => {
   z-index: 6;
   padding: 5px;
   border-radius: 13px;
-  background: rgba(17, 19, 29, 0.99);
+  background: rgba(18, 23, 34, 0.99);
   border: 1px solid var(--hairline-strong);
   box-shadow: 0 18px 55px rgba(0, 0, 0, 0.5);
 }
@@ -1377,7 +1393,7 @@ onBeforeUnmount(() => {
 .create-primary {
   color: #f7f5ff;
   background: var(--green);
-  box-shadow: 0 8px 24px rgba(118, 104, 255, 0.22);
+  box-shadow: 0 8px 24px rgba(117, 108, 255, 0.22);
 }
 .instance-icon-editor {
   position: relative;

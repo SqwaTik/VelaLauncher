@@ -6,6 +6,7 @@ import type {
   ModpackProgress,
 } from "@shared/types";
 import { useInstancesStore } from "./instances";
+import { bundledMod } from "@shared/constants";
 
 function cleanError(error: unknown): string {
   const value = (error instanceof Error ? error.message : String(error))
@@ -106,8 +107,13 @@ export const useModsStore = defineStore("mods", () => {
     });
   }
 
+  /** Mods nested in the Vela client; the catalogue shows them as built in instead of offering an install. */
+  function isBundled(project: ModProject): boolean {
+    return Boolean(bundledMod(project.slug));
+  }
+
   async function installLatest(project: ModProject): Promise<void> {
-    if (busy.value.has(project.project_id) || isInstalled(project)) return;
+    if (busy.value.has(project.project_id) || isInstalled(project) || isBundled(project)) return;
     busy.value = new Set(busy.value).add(project.project_id);
     error.value = "";
     notice.value = "";
@@ -245,6 +251,7 @@ export const useModsStore = defineStore("mods", () => {
     loadInstalled,
     loadProject,
     isInstalled,
+    isBundled,
     installLatest,
     toggle,
     toggleMany,

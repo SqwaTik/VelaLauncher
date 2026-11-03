@@ -615,7 +615,7 @@ function confirmRemove(dontAsk: boolean): void {
 .studio-hero,
 .appearance-section {
   border-radius: 16px;
-  background: rgba(17, 19, 29, 0.9);
+  background: rgba(18, 23, 34, 0.9);
   border: 1px solid var(--hairline);
   backdrop-filter: blur(18px);
 }
@@ -628,7 +628,7 @@ function confirmRemove(dontAsk: boolean): void {
   background:
     radial-gradient(
       circle at 50% 46%,
-      rgba(118, 104, 255, 0.18),
+      rgba(117, 108, 255, 0.18),
       transparent 52%
     ),
     linear-gradient(145deg, #1c2138, #0d0f1b);
@@ -640,7 +640,7 @@ function confirmRemove(dontAsk: boolean): void {
   width: 140px;
   height: 22px;
   border-radius: 50%;
-  background: rgba(118, 104, 255, 0.2);
+  background: rgba(117, 108, 255, 0.2);
   filter: blur(11px);
   transform: translateX(-50%);
 }
@@ -737,7 +737,7 @@ function confirmRemove(dontAsk: boolean): void {
   color: var(--green);
   border-color: var(--green-line);
   background: var(--green-soft);
-  box-shadow: inset 0 0 0 1px rgba(118, 104, 255, 0.09);
+  box-shadow: inset 0 0 0 1px rgba(117, 108, 255, 0.09);
 }
 .cape-tile img {
   width: 34px;
@@ -779,7 +779,7 @@ function confirmRemove(dontAsk: boolean): void {
   gap: 10px;
   border-radius: 14px;
   color: var(--text-2);
-  background: rgba(17, 19, 29, 0.9);
+  background: rgba(18, 23, 34, 0.9);
   border: 1px solid var(--hairline);
   text-align: left;
   box-shadow: 0 14px 36px rgba(0, 0, 0, 0.22);
@@ -880,7 +880,7 @@ function confirmRemove(dontAsk: boolean): void {
   padding: 9px;
   overflow: hidden;
   border-radius: 14px;
-  background: rgba(17, 19, 29, 0.98);
+  background: rgba(18, 23, 34, 0.98);
   border: 1px solid var(--hairline-strong);
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.56);
   backdrop-filter: blur(22px);
@@ -968,7 +968,7 @@ function confirmRemove(dontAsk: boolean): void {
 }
 .account-list button.active .selected-dot {
   background: var(--green);
-  box-shadow: 0 0 8px rgba(118, 104, 255, 0.7);
+  box-shadow: 0 0 8px rgba(117, 108, 255, 0.7);
 }
 .remove {
   width: 28px;
@@ -1024,7 +1024,7 @@ function confirmRemove(dontAsk: boolean): void {
   background: linear-gradient(
     120deg,
     rgba(63, 55, 130, 0.88),
-    rgba(17, 19, 29, 0.94) 62%
+    rgba(18, 23, 34, 0.94) 62%
   );
 }
 .studio-hero h2 {
@@ -1264,7 +1264,7 @@ function confirmRemove(dontAsk: boolean): void {
   display: grid;
   place-items: center;
   padding: 20px;
-  background: rgba(7, 8, 17, 0.74);
+  background: rgba(8, 10, 18, 0.74);
   backdrop-filter: blur(10px);
 }
 .account-modal {

@@ -43,6 +43,7 @@ import { setDiscordActivity } from "./discord";
 import { bundledClientUpdate, installBundledClient } from "./bundled-client";
 import { syncAppearanceManifest } from "./appearance-export";
 import { clientRuntimeArgs } from "./client-runtime";
+import { prepareAotCache } from "./aot-cache";
 import {
   fetchWithRetry,
   resilientDownloadDispatcher,
@@ -882,6 +883,15 @@ export async function launchGame(account: StoredAccount): Promise<void> {
     const developerJvmArgs = state.settings.devMode
       ? ["-Dvela.launcher.devMode=true"]
       : [];
+    const userJvmArgs = splitArgs(state.settings.jvmArgs);
+    const aot = await prepareAotCache({
+      root: dir,
+      javaPath: java.path,
+      javaVersion: java.version,
+      javaMajor: java.majorVersion,
+      classpath: [resolved.id, ...resolved.libraries.map((library) => library.name)],
+      jvmArgs: userJvmArgs,
+    });
     const { independentSpawn } = await import('./independent-process');
     await (await import('./graphics-default')).initializeGraphicsOnce(dir);
     const process = await launch({
@@ -892,7 +902,7 @@ export async function launchGame(account: StoredAccount): Promise<void> {
       version: resolved,
       minMemory,
       maxMemory,
-      extraJVMArgs: clientRuntimeArgs(dir, [...splitArgs(state.settings.jvmArgs), ...developerJvmArgs, `-Dvela.appearance.manifest=${appearanceManifest}`]),
+      extraJVMArgs: clientRuntimeArgs(dir, [...aot.args, ...userJvmArgs, ...developerJvmArgs, `-Dvela.appearance.manifest=${appearanceManifest}`]),
       extraMCArgs: splitArgs(state.settings.minecraftArgs),
       extraExecOption: { env: environment, windowsHide: true },
       prechecks,
@@ -987,6 +997,7 @@ export async function launchGame(account: StoredAccount): Promise<void> {
         runningProcesses.delete(process);
         if (activeMinecraftProcess === process) activeMinecraftProcess = null;
         if (generation === launchGeneration) launchInProgress = false;
+        void aot.finished();
         logStream?.end(
           `\n[Vela Launcher] Процесс завершён с кодом ${code ?? 0}.\n`,
         );

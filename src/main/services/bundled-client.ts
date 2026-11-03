@@ -2,7 +2,7 @@ import { app } from "electron";
 import { createHash, randomUUID } from "crypto";
 import { promises as fs, existsSync } from "fs";
 import { join, basename } from "path";
-import { GAME } from "../../shared/constants";
+import { BUNDLED_MODS, GAME } from "../../shared/constants";
 import type { ClientUpdateInfo } from "../../shared/types";
 import { readArchiveText } from "./modrinth";
 import { clientRuntimeDirectory, clientRuntimeJar } from "./client-runtime";
@@ -11,8 +11,10 @@ import { promisify } from "node:util";
 
 const bundled = [
   { resource: "vela-client.jar", id: "velaclient", version: GAME.clientVersion, filename: `vela-client-${GAME.clientVersion}+26.2.jar` },
-  { resource: "ias.jar", id: "ias", version: "9.0.7+26.2-fabric", filename: "IAS-9.0.7+26.2-fabric.jar" },
 ] as const;
+
+/** Jars that the Vela client replaces: old Vela/Royale builds and separate copies of the mods nested in it. */
+const supersededIds = new Set<string>(["velaclient", "royalemaster", "royale-master", ...BUNDLED_MODS.map(mod => mod.id)]);
 
 const sha256 = (bytes: Buffer): string => createHash("sha256").update(bytes).digest("hex");
 const resourceRoot = (): string => app.isPackaged ? process.resourcesPath : join(app.getAppPath(), "build");
@@ -67,7 +69,7 @@ export async function installBundledClient(root: string): Promise<void> {
       if (releases.some(entry => entry.id !== "velaclient" && entry.filename === file) && !replacements.some(entry => basename(entry.target) === file)) continue;
       let id: string | undefined;
       try { id = JSON.parse(await readArchiveText(join(mods, file), "fabric.mod.json") ?? "null")?.id; } catch { /* corrupt legacy jar */ }
-      if (!replacements.some(entry => basename(entry.target) === file) && !["velaclient", "ias", "royalemaster", "royale-master"].includes(id ?? "") && !/^royale-master-.*\.jar$/i.test(file)) continue;
+      if (!replacements.some(entry => basename(entry.target) === file) && !supersededIds.has(id ?? "") && !/^royale-master-.*\.jar$/i.test(file)) continue;
       await fs.mkdir(backup, { recursive: true });
       const from = join(mods, file), to = join(backup, file);
       await fs.rename(from, to);

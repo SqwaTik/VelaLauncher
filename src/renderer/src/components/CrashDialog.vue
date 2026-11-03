@@ -100,7 +100,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
   display: grid;
   place-items: center;
   padding: 20px;
-  background: rgba(3, 5, 4, 0.82);
+  background: rgba(6, 8, 14, 0.82);
   backdrop-filter: blur(12px);
 }
 .crash-card {

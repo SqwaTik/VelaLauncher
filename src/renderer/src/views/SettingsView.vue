@@ -1030,7 +1030,7 @@ onBeforeUnmount(() => {
   height: 42px;
   border-radius: 11px;
   background: var(--green-soft);
-  border: 1px solid rgba(118, 104, 255, 0.2);
+  border: 1px solid rgba(117, 108, 255, 0.2);
   box-shadow: inset 3px 0 var(--green);
   transition: transform 0.2s var(--ease);
 }
@@ -1074,7 +1074,7 @@ onBeforeUnmount(() => {
   border-radius: 11px;
   color: var(--green);
   background: var(--green-soft);
-  border: 1px solid rgba(118, 104, 255, 0.18);
+  border: 1px solid rgba(117, 108, 255, 0.18);
 }
 .settings-section h3 {
   font-size: 19px;
@@ -1090,7 +1090,7 @@ onBeforeUnmount(() => {
   margin-top: 8px;
   padding: 15px 16px;
   border-radius: 14px;
-  background: rgba(17, 19, 29, 0.9);
+  background: rgba(18, 23, 34, 0.9);
   border: 1px solid var(--hairline);
   backdrop-filter: blur(18px);
   transition:
@@ -1429,7 +1429,7 @@ label small {
   height: 2px;
   border-radius: 0 4px 4px 0;
   background: var(--green);
-  box-shadow: 0 0 12px rgba(118, 104, 255, 0.52);
+  box-shadow: 0 0 12px rgba(117, 108, 255, 0.52);
   transition: width 0.18s linear;
 }
 .launcher-update-button:disabled {
@@ -1469,7 +1469,7 @@ label small {
 .launcher-update-button:hover {
   transform: translateY(-1px);
   border-color: var(--green);
-  background: rgba(118, 104, 255, 0.16);
+  background: rgba(117, 108, 255, 0.16);
 }
 .setting-copy small.update-error {
   color: var(--danger);
@@ -1579,7 +1579,7 @@ label small {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, #79819a, #7668ff, #43c7f4);
+  background: linear-gradient(90deg, #79819a, #756cff, #5ccbff);
   transition: width 0.45s var(--ease);
 }
 .manual-memory {
@@ -1641,7 +1641,7 @@ label small {
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  background: rgba(7, 8, 17, 0.68);
+  background: rgba(8, 10, 18, 0.68);
   backdrop-filter: blur(8px);
 }
 .language-sheet {

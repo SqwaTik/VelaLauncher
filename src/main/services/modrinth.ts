@@ -10,7 +10,7 @@ import { Readable, Transform } from "stream";
 import { pipeline } from "stream/promises";
 import { BrowserWindow, shell } from "electron";
 import { open as openZip } from "yauzl";
-import { MODRINTH_API, GAME, IPC } from "../../shared/constants";
+import { MODRINTH_API, GAME, IPC, BUNDLED_MODS, bundledMod } from "../../shared/constants";
 import type {
   ModDependency,
   ModInstallResult,
@@ -605,6 +605,8 @@ function fabricCompatibilityIssues(
     ["minecraft", GAME.minecraftVersion],
     ["fabricloader", GAME.fabricLoader],
     ["java", String(javaMajor)],
+    // Nested in the Vela client, which Fabric loads from the runtime folder.
+    ...BUNDLED_MODS.map((mod): [string, string] => [mod.id, mod.version]),
   ]);
   const hasFabricApi = byId.has("fabric-api");
   const issues: FabricCompatibilityIssue[] = [];
@@ -921,6 +923,17 @@ export async function repairInstalledMods(
   const installed = await listInstalled(false);
   const repaired: string[] = [];
   const disabled: string[] = [];
+
+  for (const mod of installed.filter((entry) => entry.enabled)) {
+    const path = join(dir, mod.filename);
+    const bundled = bundledMod((await readFabricModDescriptor(path, mod).catch(() => null))?.id);
+    if (!bundled) continue;
+    onStatus?.(`Отключаем ${bundled.title}: мод уже встроен в Vela`);
+    await fs.rm(`${path}.disabled`, { force: true });
+    await fs.rename(path, `${path}.disabled`);
+    mod.enabled = false;
+    disabled.push(mod.title || mod.filename);
+  }
 
   for (const mod of installed.filter((entry) => entry.enabled)) {
     if (/^royale-master-/i.test(mod.filename)) continue;
@@ -1273,6 +1286,8 @@ export async function installProject(
       return already;
     const details = await project(id);
     displayTitle = details.title || displayTitle;
+    if (bundledMod(details.slug))
+      throw new Error(`${displayTitle} уже встроен в Vela. Отдельная копия не нужна и конфликтует со встроенной.`);
     const inferred = inferredInstalled(displayTitle);
     if (inferred && await compatibleInstalled(inferred)) {
       const remembered = await attachMetadata(
@@ -1322,6 +1337,7 @@ export async function installProject(
     )) {
       if (dep.projectId) {
         const details = await project(dep.projectId);
+        if (bundledMod(details.slug)) continue;
         const wasInstalled = byProject.has(dep.projectId);
         await resolve(dep.projectId, details.title, dep.versionId, false);
         if (!wasInstalled && !dependencyTitles.includes(details.title))
@@ -1671,7 +1687,14 @@ export async function toggleMod(
   const dir = await modsDir();
   const active = join(dir, filename);
   const disabled = join(dir, `${filename}.disabled`);
-  if (enabled && existsSync(disabled)) await fs.rename(disabled, active);
+  if (enabled && existsSync(disabled)) {
+    const text = await readArchiveText(disabled, "fabric.mod.json").catch(() => null);
+    let id: string | undefined;
+    try { id = text ? JSON.parse(text)?.id : undefined; } catch { /* unreadable jar: let Fabric report it */ }
+    const bundled = bundledMod(id);
+    if (bundled) throw new Error(`${bundled.title} уже встроен в Vela, отдельную копию включить нельзя.`);
+    await fs.rename(disabled, active);
+  }
   else if (!enabled && existsSync(active)) await fs.rename(active, disabled);
 }
 

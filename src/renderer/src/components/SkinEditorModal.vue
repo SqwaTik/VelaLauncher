@@ -10,7 +10,7 @@ const account = useAccountStore();
 const canvas = ref<HTMLCanvasElement | null>(null);
 const tool = ref<"pencil" | "eraser" | "fill" | "picker">("pencil");
 const viewMode = ref<"3d" | "texture">("3d");
-const color = ref("#7668ff");
+const color = ref("#756cff");
 const colorPickerOpen = ref(false);
 const hue = ref(138);
 const saturation = ref(61);
@@ -44,7 +44,7 @@ const swatches = [
   "#ff665e",
   "#ffb34d",
   "#ffe66d",
-  "#7668ff",
+  "#756cff",
   "#4fc4a3",
   "#4ba3ff",
   "#6f78ff",
@@ -860,7 +860,7 @@ onMounted(async () => {
   display: grid;
   place-items: center;
   padding: 18px;
-  background: rgba(7, 8, 17, 0.8);
+  background: rgba(8, 10, 18, 0.8);
   backdrop-filter: blur(14px);
   animation: overlay-in 0.16s ease;
 }
@@ -871,7 +871,7 @@ onMounted(async () => {
   flex-direction: column;
   overflow: hidden;
   border-radius: 20px;
-  background: #11131d;
+  background: #121722;
   border: 1px solid var(--hairline-strong);
   box-shadow: 0 36px 120px #000c;
   animation: dialog-in 0.22s var(--ease);
@@ -1238,7 +1238,7 @@ onMounted(async () => {
   background:
     radial-gradient(
       circle at 50% 35%,
-      rgba(118, 104, 255, 0.13),
+      rgba(117, 108, 255, 0.13),
       transparent 55%
     ),
     linear-gradient(145deg, #121622, #0b0d17);
@@ -1404,7 +1404,7 @@ onMounted(async () => {
 }
 .layers-panel button.active > i {
   background: var(--green);
-  box-shadow: 0 0 9px rgba(118, 104, 255, 0.62);
+  box-shadow: 0 0 9px rgba(117, 108, 255, 0.62);
 }
 .layers-panel > button.part {
   min-height: 37px;
@@ -1454,7 +1454,7 @@ onMounted(async () => {
   justify-content: space-between;
   gap: 12px;
   border-top: 1px solid var(--hairline);
-  background: #11131d;
+  background: #121722;
 }
 .editor-dialog > footer > div {
   display: flex;

@@ -19,9 +19,7 @@ const close = () => window.royale?.window.close();
 <template>
   <div class="titlebar">
     <div class="drag">
-      <span class="brand-wave"
-        ><img class="mark" :src="velaLogo" alt=""
-      /></span>
+      <img class="mark" :src="velaLogo" alt="" draggable="false" />
       <span class="name">{{ BRAND.name }}</span>
       <span class="ver">v{{ version }}</span>
     </div>
@@ -89,55 +87,38 @@ const close = () => window.royale?.window.close();
   justify-content: space-between;
   flex: none;
   z-index: 50;
-  background: var(--surface-1);
-  border-bottom: 1px solid var(--hairline);
+  background: transparent;
 }
 .drag {
   -webkit-app-region: drag;
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   height: 100%;
   flex: 1;
-  padding-left: 9px;
-}
-.brand-wave {
-  width: 31px;
-  height: 31px;
-  display: grid;
-  place-items: center;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.035);
-  border: 1px solid var(--hairline);
+  padding-left: 22px;
 }
 .mark {
-  width: 25px;
-  height: 25px;
-  border-radius: 6px;
+  width: 26px;
+  height: 26px;
   display: block;
   object-fit: contain;
-  background: transparent;
-  box-shadow: 0 2px 10px rgba(118, 104, 255, 0.42);
-  transition:
-    transform 0.25s var(--ease),
-    box-shadow 0.25s var(--ease);
-}
-.drag:hover .mark {
-  transform: scale(1.06);
-  box-shadow: 0 4px 16px rgba(118, 104, 255, 0.62);
+  filter: drop-shadow(0 2px 8px rgba(117, 108, 255, 0.35));
 }
 .name {
-  margin-left: 7px;
+  margin-left: 4px;
   font-family: var(--font-display);
   font-weight: 700;
   color: var(--text-0);
-  font-size: 14px;
-  letter-spacing: 0.06em;
+  font-size: 13.5px;
+  letter-spacing: 0.04em;
 }
 .ver {
-  font-size: 11px;
-  color: var(--text-3);
-  margin-top: 1px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  color: var(--text-2);
+  background: rgba(255, 255, 255, 0.05);
 }
 .controls {
   display: flex;
@@ -157,7 +138,7 @@ const close = () => window.royale?.window.close();
     transition: transform 0.14s var(--ease);
   }
   &:hover {
-    background: var(--surface-3);
+    background: rgba(255, 255, 255, 0.07);
     color: var(--text-0);
   }
   &:hover svg {

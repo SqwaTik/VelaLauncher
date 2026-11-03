@@ -82,8 +82,8 @@ watch(
   place-items: center;
   overflow: hidden;
   background:
-    radial-gradient(circle at 50% 42%, rgba(118, 104, 255, 0.16), transparent 34%),
-    radial-gradient(circle at 62% 58%, rgba(67, 199, 244, 0.06), transparent 30%),
+    radial-gradient(circle at 50% 42%, rgba(117, 108, 255, 0.16), transparent 34%),
+    radial-gradient(circle at 62% 58%, rgba(92, 203, 255, 0.06), transparent 30%),
     var(--surface-0);
   transition:
     opacity 0.38s var(--ease),
@@ -113,7 +113,7 @@ watch(
   width: 58px;
   height: 58px;
   object-fit: contain;
-  filter: drop-shadow(0 8px 22px rgba(118, 104, 255, 0.45));
+  filter: drop-shadow(0 8px 22px rgba(117, 108, 255, 0.45));
   animation: breathe 2.4s var(--ease-in-out) infinite;
   user-select: none;
 }
@@ -129,7 +129,7 @@ watch(
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  background: conic-gradient(from 0deg, transparent 0 62%, #6255ea 78%, #43c7f4 96%, transparent 100%);
+  background: conic-gradient(from 0deg, transparent 0 62%, #6255ea 78%, #5ccbff 96%, transparent 100%);
   -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
   mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
   animation: spin 1.5s linear infinite;
@@ -160,7 +160,7 @@ h1 {
   height: 100%;
   border-radius: inherit;
   background: var(--green-grad);
-  box-shadow: 0 0 12px rgba(118, 104, 255, 0.55);
+  box-shadow: 0 0 12px rgba(117, 108, 255, 0.55);
   transition: width 0.22s ease-out;
 }
 small {

@@ -313,10 +313,10 @@ async function finish(): Promise<void> {
   background:
     radial-gradient(
       800px 500px at 50% 25%,
-      rgba(118, 104, 255, 0.18),
+      rgba(117, 108, 255, 0.18),
       transparent 68%
     ),
-    #090a12;
+    #0a0d15;
 }
 .tour {
   width: min(920px, 100%);
@@ -325,7 +325,7 @@ async function finish(): Promise<void> {
   grid-template-columns: 230px 1fr;
   overflow: hidden;
   border-radius: 24px;
-  background: #11131d;
+  background: #121722;
   border: 1px solid var(--hairline-strong);
   box-shadow: 0 35px 120px #000c;
 }
@@ -378,7 +378,7 @@ async function finish(): Promise<void> {
 .tour nav span.done i {
   color: #f7f5ff;
   background: var(--green);
-  box-shadow: 0 0 18px rgba(118, 104, 255, 0.34);
+  box-shadow: 0 0 18px rgba(117, 108, 255, 0.34);
 }
 .tour > main {
   min-width: 0;

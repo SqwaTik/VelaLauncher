@@ -333,7 +333,7 @@ watch(
   place-items: center;
   background: radial-gradient(
     circle,
-    rgba(118, 104, 255, 0.13),
+    rgba(117, 108, 255, 0.13),
     transparent 60%
   );
 }

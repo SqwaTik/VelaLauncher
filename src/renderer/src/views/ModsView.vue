@@ -528,8 +528,13 @@ onBeforeUnmount(() => {
           <div class="mod-actions" @click.stop>
             <button class="more-button" @click="openDetails(project)">
               {{ tr("Подробнее", "Details", "Detalles") }}</button
+            ><span
+              v-if="!fileMode && mods.isBundled(project)"
+              class="bundled-badge"
+              :title="tr('Уже встроен в Vela', 'Already built into Vela', 'Ya incluido en Vela')"
+              ><Icon name="check" :size="14" />{{ tr("Встроен в Vela", "Built into Vela", "Incluido en Vela") }}</span
             ><button
-              v-if="!mods.isInstalled(project)"
+              v-else-if="!mods.isInstalled(project)"
               class="install-button"
               :disabled="mods.busy.has(project.project_id)"
               @click="install(project)"
@@ -946,8 +951,12 @@ onBeforeUnmount(() => {
                 @click="external(detail.project)"
               >
                 <Icon name="external" :size="16" />Открыть на Modrinth</button
-              ><span /><button
-                v-if="!detail.installed && !mods.isInstalled(detail.project)"
+              ><span /><span
+                v-if="!fileMode && mods.isBundled(detail.project)"
+                class="bundled-badge"
+                ><Icon name="check" :size="14" />Встроен в Vela</span
+              ><button
+                v-else-if="!detail.installed && !mods.isInstalled(detail.project)"
                 class="btn btn-primary"
                 @click="install(detail.project)"
               >
@@ -1009,7 +1018,7 @@ onBeforeUnmount(() => {
   gap: 15px;
   padding: 9px 14px;
   border-radius: 12px;
-  background: rgba(17, 19, 29, 0.76);
+  background: rgba(18, 23, 34, 0.76);
   border: 1px solid var(--hairline);
   backdrop-filter: blur(14px);
 }
@@ -1181,7 +1190,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   border-radius: 10px;
   color: var(--text-2);
-  background: rgba(17, 19, 29, 0.9);
+  background: rgba(18, 23, 34, 0.9);
   border: 1px solid var(--hairline);
 }
 .pack-progress > svg,
@@ -1243,7 +1252,7 @@ onBeforeUnmount(() => {
   padding: 5px 8px;
   border-radius: 7px;
   color: var(--text-2);
-  background: #11131db8;
+  background: #121722b8;
   border: 1px solid var(--hairline);
 }
 .message {
@@ -1280,7 +1289,7 @@ onBeforeUnmount(() => {
   grid-template-rows: 1fr auto;
   column-gap: 13px;
   border-radius: 14px;
-  background: rgba(17, 19, 29, 0.9);
+  background: rgba(18, 23, 34, 0.9);
   border: 1px solid var(--hairline);
   backdrop-filter: blur(16px);
   cursor: pointer;
@@ -1423,6 +1432,19 @@ onBeforeUnmount(() => {
   color: var(--green);
   background: var(--green-soft);
 }
+.bundled-badge {
+  height: 34px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border-radius: 8px;
+  color: var(--green);
+  background: var(--green-soft);
+  font-size: 10.5px;
+  font-weight: 750;
+  white-space: nowrap;
+}
 .skeleton {
   grid-template-rows: 1fr;
 }
@@ -1472,7 +1494,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 12px;
   border-radius: 13px;
-  background: rgba(17, 19, 29, 0.82);
+  background: rgba(18, 23, 34, 0.82);
   border: 1px solid var(--hairline);
 }
 .select-all {
@@ -1583,7 +1605,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 12px;
   border-radius: 12px;
-  background: rgba(17, 19, 29, 0.9);
+  background: rgba(18, 23, 34, 0.9);
   border: 1px solid var(--hairline);
   cursor: pointer;
 }
@@ -1692,7 +1714,7 @@ onBeforeUnmount(() => {
   position: fixed;
   inset: 0;
   z-index: 500;
-  background: rgba(7, 8, 17, 0.62);
+  background: rgba(8, 10, 18, 0.62);
   backdrop-filter: blur(7px);
 }
 .filter-drawer {
@@ -1703,7 +1725,7 @@ onBeforeUnmount(() => {
   width: min(420px, 92vw);
   padding: 20px;
   overflow: auto;
-  background: #11131d;
+  background: #121722;
   border-left: 1px solid var(--hairline-strong);
   box-shadow: -24px 0 70px #0008;
 }
@@ -1802,7 +1824,7 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  background: #11131df2;
+  background: #121722f2;
   border-top: 1px solid var(--hairline);
 }
 .drawer-enter-active,
@@ -1834,7 +1856,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   overflow: hidden;
   border-radius: 19px;
-  background: #11131d;
+  background: #121722;
   border: 1px solid var(--hairline-strong);
   box-shadow: 0 32px 110px #000c;
 }

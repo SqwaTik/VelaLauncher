@@ -50,12 +50,12 @@ await check("cosmetic manifest never contains credentials and supports every pro
  await saveAccounts([account],account.id);
  const state=await loadState();assert((await fs.readFile(join(state.settings.storagePath,"appearance","manifest.json"),"utf8")).includes("capeHidden"));
 });
-await check("bundle installs current Vela and IAS 26.2 and repairs modified bytes",async()=>{
+await check("bundle installs current Vela, retires separate bundled mods and repairs modified bytes",async()=>{
  const root=join(t.root,"bundle");
  await installBundledClient(root);
  assert.equal((await bundledClientUpdate(root)).available,false);
  const jars=await fs.readdir(join(root,"mods"));
- assert(!jars.some(name=>name.startsWith("vela-client")));assert(jars.includes("IAS-9.0.7+26.2-fabric.jar"));
+ assert(!jars.some(name=>name.startsWith("vela-client")));assert(!jars.some(name=>name.startsWith("IAS-")));
  await fs.copyFile(clientRuntimeJar(root),join(root,"mods","renamed-legacy-client.jar"));
  await installBundledClient(root);
  assert(!(await fs.readdir(join(root,"mods"))).includes("renamed-legacy-client.jar"));

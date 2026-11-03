@@ -76,10 +76,6 @@
         "to": "vela-client.jar"
       },
       {
-        "from": "build/ias.jar",
-        "to": "ias.jar"
-      },
-      {
         "from": "THIRD_PARTY_NOTICES.md",
         "to": "THIRD_PARTY_NOTICES.md"
       }

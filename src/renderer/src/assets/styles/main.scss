@@ -28,60 +28,61 @@
 }
 
 /* ============================================================
-   Vela Launcher — "Clean Material" design system
-   XMCL-inspired: opaque engineered surfaces, a violet-blue
-   action accent, cyan as the secondary/mod accent, crisp
-   material elevation. Functional, calm, modern.
+   Vela Launcher — "Night Sail" design system
+   One calm navy base, soft rounded surfaces that separate by
+   tone rather than lines, the Sail violet as the action colour
+   and its cyan sail as the second accent. No blur, no glow
+   loops: everything is drawn once and only moves on input.
    ============================================================ */
 
 :root {
-  /* --- surfaces: opaque, layered by elevation --- */
-  --surface-0: #090a12; /* app backdrop */
-  --surface-1: #11131d; /* base panels */
-  --surface-2: #181b28; /* cards */
-  --surface-3: #212638; /* raised cards / inputs */
-  --surface-4: #2b3148; /* hover / active */
-  --hairline: rgba(255, 255, 255, 0.08);
-  --hairline-strong: rgba(255, 255, 255, 0.15);
+  /* --- surfaces: one hue, separated by tone --- */
+  --surface-0: #0a0d15; /* app backdrop */
+  --surface-1: #0f131d; /* shell: title bar, rail */
+  --surface-2: #151a27; /* cards */
+  --surface-3: #1c2232; /* raised cards / inputs */
+  --surface-4: #252c40; /* hover / active */
+  --hairline: rgba(255, 255, 255, 0.06);
+  --hairline-strong: rgba(255, 255, 255, 0.12);
 
   /* --- text --- */
-  --text-0: #f5f4ff;
-  --text-1: #cbcbe0;
-  --text-2: #9698b2;
-  --text-3: #696d8a;
+  --text-0: #f4f5fb;
+  --text-1: #c9ccdc;
+  --text-2: #9196ad;
+  --text-3: #636982;
 
-  /* --- primary accent: Vela violet with a cool cyan edge --- */
-  --green: #7668ff;
-  --green-bright: #9288ff;
-  --green-deep: #5749dc;
-  --green-soft: rgba(118, 104, 255, 0.15);
-  --green-line: rgba(118, 104, 255, 0.45);
-  --green-grad: linear-gradient(135deg, #6255ea 0%, #7668ff 56%, #43c7f4 100%);
+  /* --- primary accent: the Sail's violet half --- */
+  --green: #756cff;
+  --green-bright: #938cff;
+  --green-deep: #5a4ff0;
+  --green-soft: rgba(117, 108, 255, 0.14);
+  --green-line: rgba(117, 108, 255, 0.42);
+  --green-grad: linear-gradient(120deg, #6a60ff 0%, #756cff 45%, #4fa8ff 100%);
 
-  /* --- secondary accent: cyan (mods / links) --- */
-  --amethyst: #43c7f4;
-  --amethyst-soft: rgba(67, 199, 244, 0.13);
-  --amethyst-line: rgba(67, 199, 244, 0.38);
+  /* --- secondary accent: the Sail's cyan half --- */
+  --amethyst: #5ccbff;
+  --amethyst-soft: rgba(92, 203, 255, 0.12);
+  --amethyst-line: rgba(92, 203, 255, 0.36);
 
   /* --- status --- */
-  --ok: #43c7f4;
-  --warn: #e8c874;
+  --ok: #4fd6a8;
+  --warn: #f0c470;
   --danger: #ff5d6c;
-  --info: #4ea8ff;
+  --info: #4fa8ff;
 
   /* --- geometry --- */
-  --r-sm: 8px;
-  --r: 12px;
-  --r-lg: 18px;
-  --sidebar-w: 66px;
-  --sidebar-w-open: 220px;
-  --titlebar-h: 42px;
+  --r-sm: 10px;
+  --r: 14px;
+  --r-lg: 20px;
+  --sidebar-w: 72px;
+  --sidebar-w-open: 232px;
+  --titlebar-h: 40px;
 
-  /* material elevation shadows */
-  --elev-1: 0 2px 8px rgba(0, 0, 0, 0.45);
-  --elev-2: 0 6px 20px rgba(0, 0, 0, 0.5);
-  --elev-3: 0 14px 40px rgba(0, 0, 0, 0.6);
-  --glow-green: 0 6px 24px rgba(118, 104, 255, 0.42);
+  /* soft, single-layer elevation */
+  --elev-1: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --elev-2: 0 8px 24px rgba(0, 0, 0, 0.34);
+  --elev-3: 0 18px 44px rgba(0, 0, 0, 0.46);
+  --glow-green: 0 8px 22px rgba(117, 108, 255, 0.36);
 
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
@@ -125,8 +126,8 @@
   --brand-grad: var(--green-grad);
   --brand-grad-soft: linear-gradient(
     135deg,
-    rgba(118, 104, 255, 0.24),
-    rgba(67, 199, 244, 0.12)
+    rgba(117, 108, 255, 0.24),
+    rgba(92, 203, 255, 0.12)
   );
 
   --shadow-1: var(--elev-1);
@@ -236,7 +237,7 @@ h4 {
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(118, 104, 255, 0.42);
+  background: rgba(117, 108, 255, 0.42);
   background-clip: padding-box;
 }
 
@@ -289,10 +290,10 @@ h4 {
   cursor: not-allowed;
 }
 .btn-primary {
-  color: #07150a;
+  color: #fff;
   background: var(--green-grad);
   border-color: transparent;
-  box-shadow: 0 6px 18px rgba(118, 104, 255, 0.24);
+  box-shadow: 0 4px 14px rgba(117, 108, 255, 0.22);
 }
 .btn-primary:hover:not(:disabled) {
   background: var(--green-grad);
@@ -405,11 +406,11 @@ h4 {
   }
 }
 
-// Over a video background every blurred panel would be re-blurred on every video frame, which is what made the
-// launcher stutter on integrated GPUs. The panels are opaque enough that the blur barely shows there; drop it.
-html.video-bg *,
-html.video-bg *::before,
-html.video-bg *::after {
+// Backdrop blur re-samples everything behind a panel on every repaint (scrolling, hover, video frames), and in
+// Electron that is the single most expensive thing a page can do. Panels here are opaque enough on their own.
+*,
+*::before,
+*::after {
   backdrop-filter: none !important;
 }
 // Minecraft running or the window minimised: decorative animations wait instead of drawing for nobody.
@@ -417,4 +418,13 @@ html.quiet *,
 html.quiet *::before,
 html.quiet *::after {
   animation-play-state: paused !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

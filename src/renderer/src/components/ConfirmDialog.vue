@@ -56,7 +56,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
   display: grid;
   place-items: center;
   padding: 20px;
-  background: rgba(3, 5, 4, 0.76);
+  background: rgba(6, 8, 14, 0.76);
   backdrop-filter: blur(10px);
   animation: confirm-fade 0.25s ease;
 }

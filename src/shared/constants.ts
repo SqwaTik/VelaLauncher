@@ -17,12 +17,28 @@ export const DISCORD_APP_ID = "1144713648120549536";
 export const GAME = {
   minecraftVersion: "26.2",
   supportedMinecraftVersions: ["26.2"] as const,
-  fabricLoader: "0.19.5",
+  fabricLoader: "0.20.1",
   fabricApi: "0.159.0+26.2",
   javaMajor: 25,
   clientVersion: "0.2.0",
   loader: "fabric" as const,
 } as const;
+
+/**
+ * Mods nested inside the Vela client jar. Fabric loads the nested copy, so a second copy in the mods folder only
+ * clashes with it: the launcher never installs one and disables any it finds.
+ */
+export const BUNDLED_MODS = [
+  { id: "ias", version: "9.0.7", slugs: ["in-game-account-switcher"], title: "In-Game Account Switcher" },
+  { id: "modmenu", version: "20.0.3", slugs: ["modmenu"], title: "Mod Menu" },
+  { id: "bobby", version: "5.2.15", slugs: ["bobby"], title: "Bobby" },
+] as const;
+
+/** The bundled mod matching a Fabric mod id or a Modrinth slug. */
+export function bundledMod(idOrSlug: string | null | undefined): (typeof BUNDLED_MODS)[number] | undefined {
+  const key = (idOrSlug ?? "").toLowerCase();
+  return key ? BUNDLED_MODS.find(mod => mod.id === key || (mod.slugs as readonly string[]).includes(key)) : undefined;
+}
 
 export const IPC = {
   // window / app

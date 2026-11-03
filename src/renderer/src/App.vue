@@ -148,7 +148,7 @@ onBeforeUnmount(() => {
         }"
         @error="settings.backgroundFailed()"
       />
-      <div v-else class="ambient-backdrop"><i /><i /><i /></div>
+      <div v-else class="ambient-backdrop" />
     </div>
     <TitleBar />
     <div class="body">
@@ -184,17 +184,18 @@ onBeforeUnmount(() => {
 }
 .background-media {
   position: absolute;
-  inset: var(--titlebar-h) 0 0;
+  inset: 0;
   z-index: 0;
   overflow: hidden;
   pointer-events: none;
-  background: #090a12;
+  background: var(--surface-0);
 }
 .app-shell > :not(.background-media) {
   position: relative;
   z-index: 1;
 }
-.background-media::after {
+// Custom wallpapers keep a readable left side (where the text sits) and a dim lower edge.
+.background-media:has(video, img)::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -202,11 +203,11 @@ onBeforeUnmount(() => {
   background-image:
     linear-gradient(
       90deg,
-      rgba(9, 10, 18, 0.89),
-      rgba(9, 10, 18, 0.46) 52%,
-      rgba(9, 10, 18, 0.76)
+      rgba(10, 13, 21, 0.9),
+      rgba(10, 13, 21, 0.5) 55%,
+      rgba(10, 13, 21, 0.72)
     ),
-    linear-gradient(180deg, rgba(7, 8, 17, 0.1), rgba(7, 8, 17, 0.56));
+    linear-gradient(180deg, rgba(10, 13, 21, 0.2), rgba(10, 13, 21, 0.6));
 }
 .background-media video,
 .background-image {
@@ -219,80 +220,29 @@ onBeforeUnmount(() => {
   display: block;
   object-position: center;
 }
+// Drawn once: two soft lights in the Sail's colours over the navy base, nothing animated.
 .ambient-backdrop {
   position: absolute;
   inset: 0;
   background:
     radial-gradient(
-      720px 520px at 76% 18%,
-      rgba(118, 104, 255, 0.24),
-      transparent 66%
+      900px 620px at 88% -8%,
+      rgba(117, 108, 255, 0.2),
+      transparent 64%
     ),
     radial-gradient(
-      520px 420px at 52% 92%,
-      rgba(67, 199, 244, 0.18),
-      transparent 68%
+      700px 520px at 62% 112%,
+      rgba(92, 203, 255, 0.1),
+      transparent 66%
     ),
-    linear-gradient(140deg, #090a12, #111624 55%, #090a12);
-}
-.ambient-backdrop::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  opacity: 0.38;
-  background-image:
-    linear-gradient(
-      30deg,
-      rgba(118, 104, 255, 0.11) 12%,
-      transparent 12.5%,
-      transparent 87%,
-      rgba(118, 104, 255, 0.11) 87.5%
-    ),
-    linear-gradient(
-      150deg,
-      rgba(67, 199, 244, 0.09) 12%,
-      transparent 12.5%,
-      transparent 87%,
-      rgba(67, 199, 244, 0.09) 87.5%
-    );
-  background-size: 90px 156px;
-  mask-image: linear-gradient(90deg, transparent 18%, #000);
-}
-.ambient-backdrop i {
-  position: absolute;
-  width: 360px;
-  height: 360px;
-  border: 1px solid rgba(94, 216, 121, 0.14);
-  transform: rotate(45deg);
-  animation: float-shape 12s ease-in-out infinite;
-}
-.ambient-backdrop i:nth-child(1) {
-  right: 12%;
-  top: 2%;
-}
-.ambient-backdrop i:nth-child(2) {
-  right: -4%;
-  bottom: -30%;
-  animation-delay: -4s;
-}
-.ambient-backdrop i:nth-child(3) {
-  left: 35%;
-  bottom: -44%;
-  animation-delay: -8s;
+    var(--surface-0);
 }
 @keyframes media-in {
   from {
     opacity: 0;
-    transform: scale(1.025);
   }
   to {
     opacity: 1;
-    transform: scale(1);
-  }
-}
-@keyframes float-shape {
-  50% {
-    transform: rotate(48deg) translateY(-18px);
   }
 }
 .body {
@@ -316,8 +266,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: 11px;
   color: var(--text-2);
-  background: rgba(9, 10, 18, 0.62);
-  backdrop-filter: blur(3px);
+  background: rgba(10, 13, 21, 0.55);
 }
 .route-loading > span {
   display: flex;
