@@ -3,10 +3,11 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import Icon from "@/components/Icon.vue";
 import UiSwitch from "@/components/ui/UiSwitch.vue";
-import FabricLogo from "@/components/FabricLogo.vue";
+import LoaderLogo from "@/components/LoaderLogo.vue";
+import { LOADERS, targetOf } from "@shared/targets";
+import { useInstancesStore } from "@/stores/instances";
 import ConfirmDialog from "@/components/ConfirmDialog.vue";
 import MarkdownContent from "@/components/MarkdownContent.vue";
-import { GAME } from "@shared/constants";
 import type { InstalledMod, ModProject } from "@shared/types";
 import { useModsStore } from "@/stores/mods";
 import { useResourcesStore } from "@/stores/resources";
@@ -19,6 +20,9 @@ const resourceMode = route.name === "resources";
 const shaderMode = route.name === "shaders";
 const fileMode = resourceMode || shaderMode;
 const baseMods = useModsStore();
+
+/** Version, loader and Java of the selected instance; every label below follows it. */
+const stack = computed(() => targetOf(useInstancesStore().active));
 const resourcesStore = useResourcesStore();
 const shadersStore = useShadersStore();
 const mods = (shaderMode
@@ -367,13 +371,13 @@ onBeforeUnmount(() => {
       </div>
       <div class="instance-facts">
         <div>
-          <small>Minecraft</small><b>{{ GAME.minecraftVersion }}</b>
+          <small>Minecraft</small><b>{{ stack.minecraftVersion }}</b>
         </div>
         <i />
         <div v-if="!fileMode" class="fabric-fact">
-          <FabricLogo />
+          <LoaderLogo :loader="stack.loader" />
           <p>
-            <small>Загрузчик</small><b>Fabric {{ GAME.fabricLoader }}</b>
+            <small>Загрузчик</small><b>{{ LOADERS[stack.loader].title }} {{ stack.loaderVersion }}</b>
           </p>
         </div>
         <div v-else class="fabric-fact">
@@ -470,7 +474,7 @@ onBeforeUnmount(() => {
         </p>
         <div>
           <span v-if="category !== 'all'">{{ activeCategoryLabel }}</span
-          ><span>{{ GAME.minecraftVersion }}</span
+          ><span>{{ stack.minecraftVersion }}</span
           ><span>{{ typeLabel }}</span>
         </div>
       </div>
@@ -521,7 +525,7 @@ onBeforeUnmount(() => {
             </div>
             <p>{{ project.description }}</p>
             <div class="compatibility">
-              <span><i />Совместим</span><b>{{ GAME.minecraftVersion }}</b
+              <span><i />Совместим</span><b>{{ stack.minecraftVersion }}</b
               ><b>{{ fileMode ? "ZIP" : "Fabric" }}</b>
             </div>
           </div>
@@ -797,14 +801,15 @@ onBeforeUnmount(() => {
             <section>
               <h3><Icon name="cube" :size="16" />Версия</h3>
               <div class="locked-choice">
-                <span>{{ GAME.minecraftVersion }}</span
+                <span>{{ stack.minecraftVersion }}</span
                 ><small>Текущая сборка</small><Icon name="check" :size="16" />
               </div>
             </section>
             <section v-if="!fileMode">
-              <h3><FabricLogo />Загрузчик</h3>
+              <h3><LoaderLogo :loader="stack.loader" />Загрузчик</h3>
               <div class="loader-choice">
-                <FabricLogo /><b>Fabric</b><span>{{ GAME.fabricLoader }}</span
+                <LoaderLogo :loader="stack.loader" /><b>{{ LOADERS[stack.loader].title }}</b
+                ><span>{{ stack.loaderVersion }}</span
                 ><Icon name="check" :size="16" />
               </div>
             </section>
@@ -925,8 +930,9 @@ onBeforeUnmount(() => {
                   >
                 </section>
                 <div class="detail-meta">
-                  <span><i />Совместим с {{ GAME.minecraftVersion }}</span
-                  ><span v-if="!fileMode"><FabricLogo />Fabric</span
+                  <span><i />Совместим с {{ stack.minecraftVersion }}</span
+                  ><span v-if="!fileMode"
+                    ><LoaderLogo :loader="stack.loader" />{{ LOADERS[stack.loader].title }}</span
                   ><span v-else
                     ><Icon :name="contentIcon" :size="14" />{{
                       typeLabel

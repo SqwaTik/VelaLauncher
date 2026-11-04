@@ -21,6 +21,7 @@ import {
   installResolvedLibrariesTask,
   installResolvedAssetsTask,
   installAssetsTask,
+  installNeoForgedTask,
   getVersionList,
 } from "@xmcl/installer";
 import { CancelledError, type Task, type TaskContext } from "@xmcl/task";
@@ -32,7 +33,8 @@ import type {
   StoredAccount,
 } from "../../shared/types";
 import { IPC, GAME, BRAND } from "../../shared/constants";
-import { gameDir, loadState, updateStats, recordPlaytime } from "./store";
+import { gameDir, loadState, updateStats, recordPlaytime, activeTarget } from "./store";
+import { LOADERS, loaderVersionId, targetLabel, type GameTarget } from "../../shared/targets";
 import { detectJava, installRequiredJava } from "./java";
 import {
   installProject,
@@ -177,50 +179,87 @@ function report(
   emitProgress({ phase, progress: monotonic, message, detail, ...extra });
 }
 
-export function fabricVersionId(): string {
-  return `${GAME.minecraftVersion}-fabric-${GAME.fabricLoader}`;
+/** The version id of the active instance's loader profile ("1.21.4-fabric-0.20.1", "neoforge-21.4.161"). */
+export async function gameVersionId(): Promise<string> {
+  return loaderVersionId(await activeTarget());
 }
 
 export async function isInstalled(): Promise<boolean> {
   try {
     const folder = MinecraftFolder.from(await gameDir());
-    return existsSync(folder.getVersionJson(fabricVersionId()));
+    return existsSync(folder.getVersionJson(await gameVersionId()));
   } catch {
     return false;
   }
 }
 
 export async function checkClientUpdate(): Promise<ClientUpdateInfo> {
-  return bundledClientUpdate(await gameDir());
+  return bundledClientUpdate(await gameDir(), await activeTarget());
 }
 
-async function ensureFabricProfile(folder: MinecraftFolder): Promise<void> {
-  const path = folder.getVersionJson(fabricVersionId());
+async function ensureFabricProfile(folder: MinecraftFolder, target: GameTarget): Promise<void> {
+  const id = loaderVersionId(target);
+  const path = folder.getVersionJson(id);
   try {
     const local = JSON.parse(await fs.readFile(path, "utf8"));
-    if (local.velaProfileVersion === 1 && local.inheritsFrom === GAME.minecraftVersion) return;
+    if (local.velaProfileVersion === 1 && local.inheritsFrom === target.minecraftVersion) return;
   } catch { /* install official profile below */ }
   const response = await fetchWithRetry(
-    `https://meta.fabricmc.net/v2/versions/loader/${GAME.minecraftVersion}/${GAME.fabricLoader}/profile/json`,
+    `https://meta.fabricmc.net/v2/versions/loader/${target.minecraftVersion}/${target.loaderVersion}/profile/json`,
     { headers: { "User-Agent": USER_AGENT } },
   );
   if (!response.ok) throw new Error(`Fabric: HTTP ${response.status}`);
   const profile = await response.json() as Record<string, any>;
-  if (profile.inheritsFrom !== GAME.minecraftVersion || profile.mainClass !== "net.fabricmc.loader.impl.launch.knot.KnotClient" || !Array.isArray(profile.libraries))
+  if (profile.inheritsFrom !== target.minecraftVersion || profile.mainClass !== "net.fabricmc.loader.impl.launch.knot.KnotClient" || !Array.isArray(profile.libraries))
     throw new Error("Fabric вернул несовместимый профиль");
   await fs.mkdir(dirname(path), { recursive: true });
   const temporary = `${path}.vela.tmp`;
-  await fs.writeFile(temporary, JSON.stringify({ ...profile, id: fabricVersionId(), velaProfileVersion: 1 }, null, 2));
+  await fs.writeFile(temporary, JSON.stringify({ ...profile, id, velaProfileVersion: 1 }, null, 2));
   await fs.rename(temporary, path);
-  const resolved = await Version.parse(folder, fabricVersionId());
+  const resolved = await Version.parse(folder, id);
   await installResolvedLibrariesTask(resolved.libraries, folder, {
     dispatcher: resilientDownloadDispatcher,
     librariesDownloadConcurrency: 4,
   }).startAndWait();
 }
 
+/**
+ * NeoForge ships an installer that patches the game jar with Java; @xmcl runs it once and writes the
+ * `neoforge-<version>` profile. A profile that parses and has all its libraries is left alone.
+ */
+async function ensureNeoForgeProfile(folder: MinecraftFolder, target: GameTarget, javaPath: string): Promise<void> {
+  const id = loaderVersionId(target);
+  try {
+    const resolved = await Version.parse(folder, id);
+    if (resolved.libraries.every((library) => existsSync(folder.getLibraryByPath(library.download.path)))) return;
+  } catch { /* run the installer below */ }
+  const task = installNeoForgedTask("neoforge", target.loaderVersion, folder, {
+    java: javaPath,
+    dispatcher: resilientDownloadDispatcher,
+    librariesDownloadConcurrency: 4,
+  });
+  currentTask = task;
+  try {
+    const installed = await task.startAndWait();
+    if (installed !== id) throw new Error(`NeoForge установил профиль ${installed}, ожидался ${id}`);
+  } finally {
+    if (currentTask === task) currentTask = null;
+  }
+}
+
+async function ensureLoaderProfile(folder: MinecraftFolder, target: GameTarget, javaPath: string): Promise<void> {
+  if (target.loader === "fabric") await ensureFabricProfile(folder, target);
+  else await ensureNeoForgeProfile(folder, target, javaPath);
+}
+
+/** Fabric needs Fabric API next to Vela; the NeoForge builds answer those calls themselves. */
+async function ensureLoaderLibraries(target: GameTarget): Promise<void> {
+  if (target.loader === "fabric") await installProject(FABRIC_API_PROJECT, "Fabric API");
+}
+
 function minecraftTaskContext(
   rootTask: Task<unknown>,
+  label: string,
   onActivity?: () => void,
 ): TaskContext {
   let lastBytes = 0;
@@ -248,7 +287,7 @@ function minecraftTaskContext(
       report(
         "client",
         0.08 + 0.62 * fraction,
-        `Загрузка файлов Minecraft ${GAME.minecraftVersion}`,
+        `Загрузка файлов Minecraft ${label}`,
         detail,
         {
           downloadedBytes: written,
@@ -417,11 +456,14 @@ export async function installGame(): Promise<void> {
   cancelRequested = false;
   try {
     const state = await loadState();
-    let java = await detectJava(state.settings.javaPath);
-    if (!java?.valid) java = await installRequiredJava();
+    const target = await activeTarget();
+    const label = targetLabel(target);
+    const loader = LOADERS[target.loader].title;
+    let java = await detectJava(state.settings.javaPath, target.javaMajor);
+    if (!java?.valid) java = await installRequiredJava(target.javaMajor);
     if (!java?.valid)
       throw new Error(
-        `Для установки Vela нужна Java ${GAME.javaMajor}+`,
+        `Для установки Vela ${label} нужна Java ${target.javaMajor}`,
       );
 
     const dir = await gameDir();
@@ -431,16 +473,16 @@ export async function installGame(): Promise<void> {
       "metadata",
       0.01,
       "Получение манифеста версий",
-      GAME.minecraftVersion,
+      label,
       { canPause: false },
     );
     const list = await getVersionList({ fetch: resilientFetch });
     const meta = list.versions.find(
-      (version) => version.id === GAME.minecraftVersion,
+      (version) => version.id === target.minecraftVersion,
     );
     if (!meta)
       throw new Error(
-        `Версия Minecraft ${GAME.minecraftVersion} не найдена в официальном манифесте`,
+        `Версия Minecraft ${target.minecraftVersion} не найдена в официальном манифесте`,
       );
 
     let resolved: ResolvedVersion | null = null;
@@ -456,7 +498,7 @@ export async function installGame(): Promise<void> {
       });
       currentTask = task;
       try {
-        resolved = await task.startAndWait(minecraftTaskContext(task));
+        resolved = await task.startAndWait(minecraftTaskContext(task, target.minecraftVersion));
         currentTask = null;
         break;
       } catch (cause) {
@@ -489,19 +531,22 @@ export async function installGame(): Promise<void> {
     report(
       "fabric",
       0.71,
-      `Установка Fabric ${GAME.fabricLoader}`,
-      GAME.minecraftVersion,
+      `Установка ${loader} ${target.loaderVersion}`,
+      target.loader === "neoforge" ? "Установщик NeoForge подготавливает игру, это займёт минуту" : target.minecraftVersion,
       { canPause: false },
     );
-    await ensureFabricProfile(folder);
-    report("fabric", 0.76, "Установка Fabric API", GAME.fabricApi, {
-      canPause: false,
-    });
-    await installProject(FABRIC_API_PROJECT, "Fabric API");
+    await ensureLoaderProfile(folder, target, java.path);
+    if (cancelRequested) throw new Error("Установка отменена");
+    if (target.fabricApi) {
+      report("fabric", 0.76, "Установка Fabric API", target.fabricApi, {
+        canPause: false,
+      });
+      await ensureLoaderLibraries(target);
+    }
 
     const modsPath = join(dir, "mods");
     await fs.mkdir(modsPath, { recursive: true });
-    await installBundledClient(dir);
+    await installBundledClient(dir, target);
     await repairInstalledMods((message) =>
       report("verify", 0.95, message, undefined, { canPause: false }),
       java.majorVersion,
@@ -510,16 +555,16 @@ export async function installGame(): Promise<void> {
       "verify",
       0.97,
       "Проверка файлов",
-      "Minecraft, Fabric, Fabric API и Vela",
+      target.fabricApi ? "Minecraft, Fabric, Fabric API и Vela" : `Minecraft, ${loader} и Vela`,
       { canPause: false },
     );
-    await Version.parse(folder, fabricVersionId());
+    await Version.parse(folder, loaderVersionId(target));
     await updateStats({ installed: true });
     report(
       "done",
       1,
       "Готово к запуску",
-      `Vela ${GAME.clientVersion}`,
+      `Vela ${GAME.clientVersion} · ${label}`,
       { canPause: false },
     );
     void resolved;
@@ -778,20 +823,21 @@ export async function launchGame(account: StoredAccount): Promise<void> {
       (item) => item.id === state.activeInstanceId,
     );
     const folder = MinecraftFolder.from(dir);
-    const id = fabricVersionId();
+    const target = await activeTarget();
+    const id = loaderVersionId(target);
     if (!existsSync(folder.getVersionJson(id))) {
       if (generation === launchGeneration) launchInProgress = false;
       emitLaunch({ state: "error", message: "Игра не установлена" });
       return;
     }
 
-    let java = await detectJava(instance?.javaPath ?? state.settings.javaPath);
-    if (!java?.valid) java = await installRequiredJava();
+    let java = await detectJava(instance?.javaPath ?? state.settings.javaPath, target.javaMajor);
+    if (!java?.valid) java = await installRequiredJava(target.javaMajor);
     if (cancelled()) return;
     if (!java?.valid) {
       emitLaunch({
         state: "error",
-        message: `Не найдена Java ${GAME.javaMajor}+. Установите её в настройках.`,
+        message: `Не найдена Java ${target.javaMajor}. Установите её в настройках.`,
       });
       if (generation === launchGeneration) launchInProgress = false;
       return;
@@ -800,7 +846,7 @@ export async function launchGame(account: StoredAccount): Promise<void> {
     emitLaunch({ state: "launching", message: "Подготовка запуска" });
     void setDiscordActivity({
       details: "Запускает Vela",
-      state: `Minecraft ${GAME.minecraftVersion}`,
+      state: `Minecraft ${targetLabel(target)}`,
     }).catch(() => {});
     if (cancelled()) return;
     if (state.settings.preLaunchCommand.trim()) {
@@ -815,7 +861,7 @@ export async function launchGame(account: StoredAccount): Promise<void> {
       });
     }
     if (cancelled()) return;
-    await ensureFabricProfile(folder);
+    await ensureLoaderProfile(folder, target, java.path);
     let resolved = await Version.parse(folder, id);
     emitLaunch({ state: "launching", message: "Проверяем файлы игры" });
     resolved = await repairLaunchFiles(
@@ -828,8 +874,8 @@ export async function launchGame(account: StoredAccount): Promise<void> {
     // Lightweight damage (partial/corrupt Modrinth archives) is repaired
     // silently before Fabric sees it. The launch button keeps one calm status
     // instead of exposing technical recovery work to the player.
-    await installBundledClient(dir);
-    await installProject(FABRIC_API_PROJECT, "Fabric API");
+    await installBundledClient(dir, target);
+    await ensureLoaderLibraries(target);
     await repairInstalledMods(undefined, java.majorVersion);
     if (cancelled()) return;
     const automaticMax = Math.min(
@@ -902,7 +948,7 @@ export async function launchGame(account: StoredAccount): Promise<void> {
       version: resolved,
       minMemory,
       maxMemory,
-      extraJVMArgs: clientRuntimeArgs(dir, [...aot.args, ...userJvmArgs, ...developerJvmArgs, `-Dvela.appearance.manifest=${appearanceManifest}`]),
+      extraJVMArgs: clientRuntimeArgs(dir, [...aot.args, ...userJvmArgs, ...developerJvmArgs, `-Dvela.appearance.manifest=${appearanceManifest}`], target.loader),
       extraMCArgs: splitArgs(state.settings.minecraftArgs),
       extraExecOption: { env: environment, windowsHide: true },
       prechecks,
@@ -939,7 +985,7 @@ export async function launchGame(account: StoredAccount): Promise<void> {
         { flags: "a" },
       );
       logStream.write(
-        `[Vela Launcher] Minecraft ${GAME.minecraftVersion}, PID ${process.pid ?? "unknown"}\n`,
+        `[Vela Launcher] Minecraft ${targetLabel(target)}, PID ${process.pid ?? "unknown"}\n`,
       );
     }
     const pipeLog = (

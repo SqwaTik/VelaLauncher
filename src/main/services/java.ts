@@ -8,7 +8,7 @@ import { DownloadTask } from "@xmcl/installer";
 import type { TaskContext } from "@xmcl/task";
 import { GAME, IPC } from "../../shared/constants";
 import type { InstallProgress, JavaInfo } from "../../shared/types";
-import { loadState, saveSettings } from "./store";
+import { activeTargetSync, loadState, saveSettings } from "./store";
 import { resilientDownloadDispatcher } from "./network";
 
 const execFileAsync = promisify(execFile);
@@ -25,7 +25,17 @@ export function parseJavaVersion(
   return Number.isFinite(major) ? { version, major } : null;
 }
 
-async function probe(javaPath: string): Promise<JavaInfo | null> {
+/**
+ * Whether a Java release runs a game that needs `required`. Minecraft 26.x needs Java 25+; 1.21.x is built for Java 21,
+ * and its NeoForge toolchain does not know newer class files, so it takes 21 to 24.
+ */
+export function javaSuits(major: number, required: number): boolean {
+  return major >= required && (required >= 25 || major < 25);
+}
+
+const requiredMajor = (): number => activeTargetSync().javaMajor;
+
+async function probe(javaPath: string, required = requiredMajor()): Promise<JavaInfo | null> {
   try {
     const { stderr, stdout } = await execFileAsync(javaPath, ["-version"], {
       timeout: 8_000,
@@ -37,19 +47,19 @@ async function probe(javaPath: string): Promise<JavaInfo | null> {
       path: javaPath,
       version: parsed.version,
       majorVersion: parsed.major,
-      valid: parsed.major >= GAME.javaMajor,
+      valid: javaSuits(parsed.major, required),
     };
   } catch {
     return null;
   }
 }
 
-async function managedJavaExecutable(): Promise<string> {
+async function managedJavaExecutable(required = requiredMajor()): Promise<string> {
   const state = await loadState();
   return join(
     state.settings.storagePath,
     "jre",
-    `java${GAME.javaMajor}`,
+    `java${required}`,
     "bin",
     "java.exe",
   );
@@ -98,14 +108,15 @@ async function discoverNested(root: string): Promise<string[]> {
 
 export async function detectJava(
   preferred?: string | null,
+  required = requiredMajor(),
 ): Promise<JavaInfo | null> {
-  const managed = await managedJavaExecutable();
+  const managed = await managedJavaExecutable(required);
   const checked = new Set<string>();
   let fallback: JavaInfo | null = null;
   for (const javaPath of [preferred, managed]) {
     if (!javaPath || checked.has(javaPath)) continue;
     checked.add(javaPath);
-    const info = await probe(javaPath);
+    const info = await probe(javaPath, required);
     if (info?.valid) return info;
     fallback ??= info;
   }
@@ -119,7 +130,7 @@ export async function detectJava(
 
   for (const javaPath of [...new Set(expanded)]) {
     if (checked.has(javaPath)) continue;
-    const info = await probe(javaPath);
+    const info = await probe(javaPath, required);
     if (!info) continue;
     if (info.valid) return info;
     fallback ??= info;
@@ -164,15 +175,15 @@ async function findJava(root: string): Promise<string | null> {
 }
 
 /** Install the portable Eclipse Temurin JDK required by the active game stack. */
-export async function installRequiredJava(): Promise<JavaInfo> {
-  const existing = await probe(await managedJavaExecutable());
+export async function installRequiredJava(required = requiredMajor()): Promise<JavaInfo> {
+  const existing = await probe(await managedJavaExecutable(required), required);
   if (existing?.valid) return existing;
 
   const state = await loadState();
   const jreRoot = join(state.settings.storagePath, "jre");
-  const destination = join(jreRoot, `java${GAME.javaMajor}`);
-  const work = join(jreRoot, `.java${GAME.javaMajor}-install`);
-  const archive = join(jreRoot, `temurin-${GAME.javaMajor}.zip`);
+  const destination = join(jreRoot, `java${required}`);
+  const work = join(jreRoot, `.java${required}-install`);
+  const archive = join(jreRoot, `temurin-${required}.zip`);
   await fs.mkdir(jreRoot, { recursive: true });
   await fs.rm(work, { recursive: true, force: true });
   await fs.mkdir(work, { recursive: true });
@@ -180,7 +191,7 @@ export async function installRequiredJava(): Promise<JavaInfo> {
   let lastBytes = 0;
   let lastAt = Date.now();
   let speed = 0;
-  const url = `https://api.adoptium.net/v3/binary/latest/${GAME.javaMajor}/ga/windows/${adoptiumArchitecture()}/jdk/hotspot/normal/eclipse`;
+  const url = `https://api.adoptium.net/v3/binary/latest/${required}/ga/windows/${adoptiumArchitecture()}/jdk/hotspot/normal/eclipse`;
   const task = new DownloadTask({
     url,
     destination: archive,
@@ -197,7 +208,7 @@ export async function installRequiredJava(): Promise<JavaInfo> {
       emitJava({
         phase: "java",
         progress: total > 0 ? written / total : 0,
-        message: `Скачивание Java ${GAME.javaMajor}`,
+        message: `Скачивание Java ${required}`,
         detail: "Eclipse Temurin JDK",
         downloadedBytes: written,
         totalBytes: total,
@@ -220,7 +231,7 @@ export async function installRequiredJava(): Promise<JavaInfo> {
   emitJava({
     phase: "java",
     progress: 0.94,
-    message: `Установка Java ${GAME.javaMajor}`,
+    message: `Установка Java ${required}`,
     detail: "Распаковка переносимого JDK",
   });
   await extract(archive, { dir: work });
@@ -233,12 +244,13 @@ export async function installRequiredJava(): Promise<JavaInfo> {
   await fs.rm(work, { recursive: true, force: true });
   await fs.rm(archive, { force: true });
 
-  const result = await probe(join(destination, "bin", "java.exe"));
+  const result = await probe(join(destination, "bin", "java.exe"), required);
   if (!result?.valid)
     throw new Error(
-      `Установленная Java не соответствует версии ${GAME.javaMajor}+`,
+      `Установленная Java не соответствует версии ${required}+`,
     );
-  await saveSettings({ ...state.settings, javaPath: result.path });
+  // The settings path is the default stack's Java; other versions find their own managed copy by itself.
+  if (required === GAME.javaMajor) await saveSettings({ ...state.settings, javaPath: result.path });
   emitJava({
     phase: "done",
     progress: 1,

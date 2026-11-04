@@ -1,12 +1,13 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
-import { GAME } from "@shared/constants";
+import { targetOf } from "@shared/targets";
 import type {
   ClientUpdateInfo,
   InstallProgress,
   LaunchStatus,
 } from "@shared/types";
 import { useAccountStore } from "./account";
+import { useInstancesStore } from "./instances";
 
 export type InstallState =
   | "not-installed"
@@ -50,7 +51,9 @@ export const useLauncherStore = defineStore("launcher", () => {
   const playtimeMinutes = ref(0);
   const lastPlayed = ref<number | null>(null);
 
-  const version = computed(() => GAME.minecraftVersion);
+  /** Version, loader and Java of the selected instance. */
+  const target = computed(() => targetOf(useInstancesStore().active));
+  const version = computed(() => target.value.minecraftVersion);
   const isInstalled = computed(() =>
     ["installed", "launching", "running"].includes(state.value),
   );
@@ -332,6 +335,7 @@ export const useLauncherStore = defineStore("launcher", () => {
     runningCount,
     preparing,
     version,
+    target,
     isInstalled,
     playtimeMinutes,
     playtimeLabel,

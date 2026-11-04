@@ -8,6 +8,16 @@ import { useInstancesStore } from "@/stores/instances";
 import { useModsStore } from "@/stores/mods";
 import { useLocale } from "@/composables/useLocale";
 import { GAME } from "@shared/constants";
+import {
+  CLIENT_VERSION,
+  LOADERS,
+  TARGETS,
+  findTarget,
+  targetOf,
+  type GameTarget,
+  type LoaderId,
+} from "@shared/targets";
+import LoaderLogo from "./LoaderLogo.vue";
 import generatedLogo from "@/assets/images/vela-logo.png";
 import defaultInstanceIcon from "@/assets/images/minecraft-instance-default.png";
 
@@ -41,6 +51,35 @@ const editingId = ref<string | null>(null);
 const deleteId = ref<string | null>(null);
 const draftName = ref("");
 const draftVersion = ref(GAME.minecraftVersion);
+const draftLoader = ref<LoaderId>(GAME.loader);
+const draftTarget = computed(() => findTarget(draftVersion.value, draftLoader.value));
+const loaderOptions = computed(() => [
+  {
+    id: "fabric" as const,
+    title: LOADERS.fabric.title,
+    hint: tr("Быстрый старт, моды Fabric", "Fast start, Fabric mods", "Inicio rápido, mods Fabric"),
+  },
+  {
+    id: "neoforge" as const,
+    title: LOADERS.neoforge.title,
+    hint: tr("Моды NeoForge", "NeoForge mods", "Mods NeoForge"),
+  },
+]);
+const versionGroups = computed(() =>
+  (["current", "classic"] as const).map((channel) => ({
+    channel,
+    title:
+      channel === "current"
+        ? tr("Актуальные", "Current", "Actuales")
+        : tr("Классика 1.21", "Classic 1.21", "Clásicas 1.21"),
+    targets: TARGETS.filter(
+      (target) => target.loader === draftLoader.value && target.channel === channel,
+    ),
+  })),
+);
+function stackLine(target: GameTarget): string {
+  return `${target.minecraftVersion} · ${LOADERS[target.loader].short}`;
+}
 const draftIconDataUrl = ref<string | null>(null);
 const draftJavaPath = ref<string | null>(null);
 const javaMenuOpen = ref(false);
@@ -53,6 +92,7 @@ const contextMenu = ref<{ id: string; x: number; y: number } | null>(null);
 const editingInstance = computed(() =>
   instances.instances.find((item) => item.id === editingId.value),
 );
+const editingTarget = computed(() => targetOf(editingInstance.value));
 let hoverTimer: ReturnType<typeof setTimeout> | null = null;
 
 const nav = computed(() => [
@@ -143,7 +183,8 @@ function openInstanceMenu(event: MouseEvent, id: string): void {
 function beginCreate(): void {
   if (!instances.canCreate) return;
   draftName.value = `Экземпляр ${instances.instances.length + 1}`;
-  draftVersion.value = GAME.minecraftVersion;
+  draftVersion.value = targetOf(instances.active).minecraftVersion;
+  draftLoader.value = targetOf(instances.active).loader;
   draftIconDataUrl.value = null;
   editingId.value = null;
   createOpen.value = true;
@@ -167,7 +208,8 @@ async function createInstance(): Promise<void> {
   const created = await instances.create(
     draftName.value,
     "created",
-    draftVersion.value,
+    draftTarget.value.minecraftVersion,
+    draftTarget.value.loader,
   );
   if (created) {
     if (draftIconDataUrl.value) {
@@ -311,7 +353,11 @@ onBeforeUnmount(() => {
           </span>
           <span class="instance-copy"
             ><b>{{ instance.name }}</b
-            ><small>Vela {{ instance.minecraftVersion }}</small></span
+            ><small class="instance-stack"
+              ><LoaderLogo :loader="targetOf(instance).loader" />{{
+                stackLine(targetOf(instance))
+              }}</small
+            ></span
           >
           <span
             class="instance-more"
@@ -473,25 +519,61 @@ onBeforeUnmount(() => {
                 autofocus
                 @keyup.enter="createInstance"
             /></label>
-            <label class="instance-version-field">
-              <span>Версия Minecraft</span>
-              <span class="instance-version-select">
-                <select v-model="draftVersion">
-                  <option
-                    v-for="version in GAME.supportedMinecraftVersions"
-                    :key="version"
-                    :value="version"
+            <div class="stack-picker">
+              <span class="stack-label">Загрузчик</span>
+              <div class="loader-switch" role="radiogroup" aria-label="Загрузчик">
+                <button
+                  v-for="loader in loaderOptions"
+                  :key="loader.id"
+                  type="button"
+                  role="radio"
+                  class="loader-option"
+                  :class="[loader.id, { active: draftLoader === loader.id }]"
+                  :aria-checked="draftLoader === loader.id"
+                  @click="draftLoader = loader.id"
+                >
+                  <span class="loader-mark"><LoaderLogo :loader="loader.id" /></span>
+                  <span class="loader-copy"
+                    ><b>{{ loader.title }}</b><small>{{ loader.hint }}</small></span
                   >
-                    Minecraft {{ version }}
-                  </option>
-                </select>
-                <Icon name="chevron" :size="16" />
-              </span>
-            </label>
-            <p class="instance-help">
-              У экземпляра будут собственные моды, настройки и файлы игры.
-              Пока поддерживается стабильная версия Minecraft 26.2.
-            </p>
+                  <i class="loader-check"><Icon name="check" :size="12" /></i>
+                </button>
+              </div>
+              <span class="stack-label">Версия Minecraft</span>
+              <div
+                v-for="group in versionGroups"
+                :key="group.channel"
+                class="version-group"
+              >
+                <small>{{ group.title }}</small>
+                <div class="version-grid" role="radiogroup" :aria-label="group.title">
+                  <button
+                    v-for="target in group.targets"
+                    :key="target.key"
+                    type="button"
+                    role="radio"
+                    class="version-card"
+                    :class="{ active: draftTarget.key === target.key }"
+                    :aria-checked="draftTarget.key === target.key"
+                    @click="draftVersion = target.minecraftVersion"
+                  >
+                    <b>{{ target.minecraftVersion }}</b>
+                    <small>{{ target.note }}</small>
+                    <i>Java {{ target.javaMajor }}</i>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="stack-summary" :class="draftTarget.loader">
+              <span class="loader-mark"><LoaderLogo :loader="draftTarget.loader" /></span>
+              <span
+                ><b>Vela {{ CLIENT_VERSION }} · Minecraft {{ stackLine(draftTarget) }}</b
+                ><small
+                  >Свои моды, настройки и миры. Версию и загрузчик экземпляра потом
+                  не поменять — для другой создайте новый.</small
+                ></span
+              >
+            </div>
             <footer>
               <button class="import-compact" @click="importPack">
                 <Icon name="import" :size="17" />
@@ -537,6 +619,16 @@ onBeforeUnmount(() => {
               ><span>Название</span
               ><input v-model="draftName" maxlength="40"
             /></label>
+            <div class="stack-summary compact" :class="editingTarget.loader">
+              <span class="loader-mark"><LoaderLogo :loader="editingTarget.loader" /></span>
+              <span
+                ><b>Minecraft {{ stackLine(editingTarget) }}</b
+                ><small
+                  >Vela {{ CLIENT_VERSION }} · {{ LOADERS[editingTarget.loader].title }}
+                  {{ editingTarget.loaderVersion }} · Java {{ editingTarget.javaMajor }}</small
+                ></span
+              >
+            </div>
             <div class="instance-java">
               <span>Java для этого экземпляра</span>
               <button
@@ -550,7 +642,7 @@ onBeforeUnmount(() => {
                   }}</b
                   ><small>{{
                     draftJavaPath ||
-                    `Лаунчер найдёт Java ${GAME.javaMajor}+ и проверит её перед запуском`
+                    `Лаунчер найдёт Java ${editingTarget.javaMajor} и проверит её перед запуском`
                   }}</small></span
                 ><Icon name="chevron" :size="16" />
               </button>
@@ -564,7 +656,7 @@ onBeforeUnmount(() => {
                   >
                     <Icon name="sparkles" :size="16" /><span
                       ><b>Автоматически</b
-                      ><small>Поиск Java {{ GAME.javaMajor }}+ перед запуском</small></span
+                      ><small>Поиск Java {{ editingTarget.javaMajor }} перед запуском</small></span
                     >
                   </button>
                   <button @click="pickInstanceJava">
@@ -1253,6 +1345,222 @@ onBeforeUnmount(() => {
   pointer-events: none;
   color: var(--green);
   transform: rotate(90deg);
+}
+.instance-stack {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.instance-stack .loader-logo {
+  flex: none;
+  font-size: 10px;
+}
+.stack-picker {
+  margin-top: 18px;
+  display: grid;
+  gap: 8px;
+}
+.stack-label {
+  margin-top: 4px;
+  color: var(--text-2);
+  font-size: 10px;
+  font-weight: 700;
+}
+.loader-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.loader-option {
+  --loader-tint: var(--green);
+  --loader-soft: var(--green-soft);
+  --loader-line: var(--green-line);
+  position: relative;
+  min-height: 58px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  border-radius: 13px;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--hairline-strong);
+  text-align: left;
+  transition:
+    color 0.16s,
+    background 0.16s,
+    border-color 0.16s,
+    box-shadow 0.16s,
+    transform 0.16s var(--ease);
+}
+.loader-option.neoforge {
+  --loader-tint: #f08a45;
+  --loader-soft: rgba(240, 138, 69, 0.13);
+  --loader-line: rgba(240, 138, 69, 0.45);
+}
+.loader-option:hover {
+  color: var(--text-0);
+  background: var(--surface-3);
+  transform: translateY(-1px);
+}
+.loader-option.active {
+  color: var(--text-0);
+  background: linear-gradient(140deg, var(--loader-soft), transparent 70%), var(--surface-3);
+  border-color: var(--loader-line);
+  box-shadow: 0 0 0 3px var(--loader-soft);
+}
+.loader-mark {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  font-size: 19px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--hairline);
+}
+.loader-copy {
+  min-width: 0;
+  flex: 1;
+}
+.loader-copy b,
+.loader-copy small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.loader-copy b {
+  font-size: 12px;
+}
+.loader-copy small {
+  margin-top: 3px;
+  color: var(--text-3);
+  font-size: 9.5px;
+}
+.loader-check {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--loader-tint);
+  opacity: 0;
+  transform: scale(0.6);
+  transition:
+    opacity 0.16s,
+    transform 0.2s var(--ease);
+}
+.loader-option.active .loader-check {
+  opacity: 1;
+  transform: none;
+}
+.version-group {
+  display: grid;
+  gap: 6px;
+}
+.version-group > small {
+  color: var(--text-3);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.version-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.version-card {
+  position: relative;
+  min-height: 70px;
+  padding: 10px 12px;
+  display: grid;
+  align-content: start;
+  gap: 3px;
+  border-radius: 12px;
+  color: var(--text-1);
+  background: var(--surface-2);
+  border: 1px solid var(--hairline-strong);
+  text-align: left;
+  transition:
+    background 0.16s,
+    border-color 0.16s,
+    box-shadow 0.16s,
+    transform 0.16s var(--ease);
+}
+.version-card:hover {
+  background: var(--surface-3);
+  transform: translateY(-1px);
+}
+.version-card.active {
+  background: linear-gradient(150deg, var(--green-soft), transparent 75%), var(--surface-3);
+  border-color: var(--green-line);
+  box-shadow: 0 0 0 3px rgba(117, 108, 255, 0.1);
+}
+.version-card b {
+  color: var(--text-0);
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+.version-card small {
+  color: var(--text-3);
+  font-size: 9.5px;
+  line-height: 1.35;
+}
+.version-card i {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: var(--text-2);
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 8.5px;
+  font-style: normal;
+  font-weight: 700;
+}
+.version-card.active i {
+  color: var(--green-bright);
+  background: var(--green-soft);
+}
+.stack-summary {
+  margin-top: 14px;
+  padding: 11px 12px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  border-radius: 13px;
+  background: linear-gradient(120deg, var(--green-soft), transparent 80%);
+  border: 1px solid var(--green-line);
+}
+.stack-summary.neoforge {
+  background: linear-gradient(120deg, rgba(240, 138, 69, 0.12), transparent 80%);
+  border-color: rgba(240, 138, 69, 0.38);
+}
+.stack-summary > span:last-child {
+  min-width: 0;
+}
+.stack-summary b,
+.stack-summary small {
+  display: block;
+}
+.stack-summary b {
+  color: var(--text-0);
+  font-size: 11.5px;
+}
+.stack-summary small {
+  margin-top: 3px;
+  color: var(--text-3);
+  font-size: 9.5px;
+  line-height: 1.45;
+}
+.stack-summary.compact {
+  margin-top: 14px;
 }
 .instance-help {
   margin-top: 10px;

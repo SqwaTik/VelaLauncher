@@ -2,13 +2,17 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import Icon from "@/components/Icon.vue";
 import UiSwitch from "@/components/ui/UiSwitch.vue";
-import { GAME } from "@shared/constants";
+import { targetOf } from "@shared/targets";
+import { useInstancesStore } from "@/stores/instances";
 import { useSettingsStore } from "@/stores/settings";
 import { useLocale } from "@/composables/useLocale";
 
 const store = useSettingsStore();
 const { tr } = useLocale();
 const settings = computed(() => store.settings);
+
+/** Version, loader and Java of the selected instance; every label below follows it. */
+const stack = computed(() => targetOf(useInstancesStore().active));
 const active = ref("appearance");
 const languageOpen = ref(false);
 const nativeLibrariesOpen = ref(false);
@@ -638,7 +642,7 @@ onBeforeUnmount(() => {
         <div class="setting-card compact">
           <div class="setting-icon"><Icon name="chip" :size="18" /></div>
           <div class="setting-copy">
-            <b>Java {{ GAME.javaMajor }}+</b
+            <b>Java {{ stack.javaMajor }}</b
             ><small>{{
               store.detectingJava
                 ? "Проверяем…"
@@ -677,7 +681,7 @@ onBeforeUnmount(() => {
             {{
               store.installingJava
                 ? `${Math.round((store.javaInstallProgress?.progress || 0) * 100)}%`
-                : `${tr("Установить", "Install", "Instalar")} Java ${GAME.javaMajor}`
+                : `${tr("Установить", "Install", "Instalar")} Java ${stack.javaMajor}`
             }}
           </button>
         </div>
@@ -710,7 +714,7 @@ onBeforeUnmount(() => {
                   settings.javaPath ? "Свой java.exe" : "Автоматически"
                 }}</b
                 ><small>{{
-                  settings.javaPath || `Поиск Java ${GAME.javaMajor}+`
+                  settings.javaPath || `Поиск Java ${stack.javaMajor}`
                 }}</small></span
               >
               <Icon name="chevron" :size="15" />

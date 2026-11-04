@@ -12,7 +12,8 @@ import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import extract from "extract-zip";
 import { ZipFile } from "yazl";
-import { GAME, IPC } from "../../shared/constants";
+import { IPC } from "../../shared/constants";
+import { LOADERS, isSupportedTarget, targetLabel, type LoaderId } from "../../shared/targets";
 import type {
   InstalledMod,
   ModpackProgress,
@@ -23,6 +24,7 @@ import { exactVersion, listInstalled, listResourcePacks, listShaderPacks } from 
 import {
   activeInstance,
   createImportedInstance,
+  activeTarget,
   gameDir,
   removeInstance,
 } from "./store";
@@ -173,6 +175,21 @@ async function copyTree(source: string, destination: string): Promise<number> {
   return copied;
 }
 
+/** The Vela version and loader an MRPACK asks for; packs for a stack Vela is not built for are refused. */
+function mrpackStack(index: MrpackIndex): { minecraftVersion: string; loader: LoaderId } {
+  const minecraftVersion = index.dependencies?.minecraft;
+  if (!minecraftVersion) throw new Error("В MRPACK не указана версия Minecraft");
+  const loader: LoaderId | null = index.dependencies["neoforge"]
+    ? "neoforge"
+    : index.dependencies["fabric-loader"] || !index.dependencies["forge"] && !index.dependencies["quilt-loader"]
+      ? "fabric"
+      : null;
+  if (!loader) throw new Error("Vela работает на Fabric и NeoForge, а эта сборка — для другого загрузчика");
+  if (!isSupportedTarget(minecraftVersion, loader))
+    throw new Error(`Vela не выпускается для Minecraft ${minecraftVersion} на ${LOADERS[loader].title}`);
+  return { minecraftVersion, loader };
+}
+
 async function importMrpack(
   extracted: string,
   index: MrpackIndex,
@@ -184,9 +201,10 @@ async function importMrpack(
   if (!index.dependencies?.minecraft) {
     throw new Error("В MRPACK не указана версия Minecraft");
   }
-  if (index.dependencies.minecraft !== GAME.minecraftVersion) {
+  const target = await activeTarget();
+  if (index.dependencies.minecraft !== target.minecraftVersion) {
     throw new Error(
-      `Сборка рассчитана на Minecraft ${index.dependencies.minecraft}, а Vela — на ${GAME.minecraftVersion}`,
+      `Сборка рассчитана на Minecraft ${index.dependencies.minecraft}, а экземпляр — на ${targetLabel(target)}`,
     );
   }
   const root = await gameDir();
@@ -307,6 +325,7 @@ export async function importModpack(sourcePath: string): Promise<ModpackResult> 
       const index = JSON.parse(await fs.readFile(indexPath, "utf8")) as MrpackIndex;
       const instance = await createImportedInstance(
         index.name || basename(sourcePath, extension),
+        mrpackStack(index),
       );
       importedInstanceId = instance.id;
       return {
@@ -451,6 +470,7 @@ async function exportMrpack(destination: string): Promise<ModpackResult> {
       extraFiles += 1;
     }
   }
+  const target = await activeTarget();
   const index: MrpackIndex = {
     formatVersion: 1,
     game: "minecraft",
@@ -459,8 +479,8 @@ async function exportMrpack(destination: string): Promise<ModpackResult> {
     summary: "Сборка, экспортированная из Vela Launcher",
     files: indexFiles,
     dependencies: {
-      minecraft: GAME.minecraftVersion,
-      "fabric-loader": GAME.fabricLoader,
+      minecraft: target.minecraftVersion,
+      [target.loader === "fabric" ? "fabric-loader" : "neoforge"]: target.loaderVersion,
     },
   };
   zip.addBuffer(
@@ -481,6 +501,7 @@ async function exportMrpack(destination: string): Promise<ModpackResult> {
 
 async function exportGenericZip(destination: string): Promise<ModpackResult> {
   const root = await gameDir();
+  const target = await activeTarget();
   const zip = new ZipFile();
   let files = 0;
   for (const directory of GENERIC_DIRECTORIES) {
@@ -498,8 +519,8 @@ async function exportGenericZip(destination: string): Promise<ModpackResult> {
       JSON.stringify(
         {
           name: "Vela",
-          minecraft: GAME.minecraftVersion,
-          loader: `fabric-${GAME.fabricLoader}`,
+          minecraft: target.minecraftVersion,
+          loader: `${target.loader}-${target.loaderVersion}`,
           exportedAt: new Date().toISOString(),
         },
         null,

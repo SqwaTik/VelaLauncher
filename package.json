@@ -72,8 +72,9 @@
         "to": "icon.ico"
       },
       {
-        "from": "build/vela-client.jar",
-        "to": "vela-client.jar"
+        "from": "build/clients",
+        "to": "clients",
+        "filter": ["vela-client-*.jar"]
       },
       {
         "from": "THIRD_PARTY_NOTICES.md",

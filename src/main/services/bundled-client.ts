@@ -2,40 +2,57 @@ import { app } from "electron";
 import { createHash, randomUUID } from "crypto";
 import { promises as fs, existsSync } from "fs";
 import { join, basename } from "path";
-import { BUNDLED_MODS, GAME } from "../../shared/constants";
+import { BUNDLED_MODS } from "../../shared/constants";
+import { LOADERS, targetLabel, type GameTarget } from "../../shared/targets";
 import type { ClientUpdateInfo } from "../../shared/types";
 import { readArchiveText } from "./modrinth";
-import { clientRuntimeDirectory, clientRuntimeJar } from "./client-runtime";
+import { clientRuntimeDirectory, clientRuntimeJar, managedNeoForgeJar } from "./client-runtime";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
-const bundled = [
-  { resource: "vela-client.jar", id: "velaclient", version: GAME.clientVersion, filename: `vela-client-${GAME.clientVersion}+26.2.jar` },
-] as const;
-
-/** Jars that the Vela client replaces: old Vela/Royale builds and separate copies of the mods nested in it. */
-const supersededIds = new Set<string>(["velaclient", "royalemaster", "royale-master", ...BUNDLED_MODS.map(mod => mod.id)]);
+/** Jars that the Vela client replaces: old Vela/Royale builds and separate copies of the mods compiled into it. */
+const supersededIds = (target: GameTarget): Set<string> =>
+  new Set<string>(["velaclient", "royalemaster", "royale-master", ...BUNDLED_MODS.map(mod => mod.id).filter(id => target.bundledMods.includes(id))]);
 
 const sha256 = (bytes: Buffer): string => createHash("sha256").update(bytes).digest("hex");
 const resourceRoot = (): string => app.isPackaged ? process.resourcesPath : join(app.getAppPath(), "build");
 
-async function loadBundle() {
-  return Promise.all(bundled.map(async (entry) => {
-    const source = join(resourceRoot(), entry.resource);
-    const bytes = await fs.readFile(source);
-    const metadata = JSON.parse(await readArchiveText(source, "fabric.mod.json") ?? "null");
-    // The Vela client ships inside the launcher, so its own fabric.mod.json is the source of its version; only the
-    // id and the Minecraft dependency are verified. Pinning the version here broke launching after every client bump.
-    const versionOk = entry.id === "velaclient" ? typeof metadata?.version === "string" && metadata.version.length > 0 : metadata?.version === entry.version;
-    if (metadata?.id !== entry.id || !versionOk || !JSON.stringify(metadata?.depends?.minecraft).includes(GAME.minecraftVersion))
-      throw new Error(`Пакет ${entry.resource} не соответствует Minecraft ${GAME.minecraftVersion}. Переустановите Vela Launcher.`);
-    return { ...entry, version: String(metadata.version), source, bytes, hash: sha256(bytes) };
-  }));
+/** Mod id, version and Minecraft dependency of a Fabric or NeoForge jar. */
+async function readClientMetadata(path: string): Promise<{ id?: string; version?: string; minecraft?: string } | null> {
+  const fabric = await readArchiveText(path, "fabric.mod.json").catch(() => null);
+  if (fabric) {
+    const json = JSON.parse(fabric);
+    return { id: json?.id, version: json?.version, minecraft: JSON.stringify(json?.depends?.minecraft ?? "") };
+  }
+  const toml = await readArchiveText(path, "META-INF/neoforge.mods.toml").catch(() => null);
+  if (!toml) return null;
+  const id = toml.match(/^\s*modId\s*=\s*"([^"]+)"/m)?.[1];
+  const version = toml.match(/^\s*version\s*=\s*"([^"]+)"/m)?.[1];
+  const minecraft = toml.match(/modId\s*=\s*"minecraft"[\s\S]*?versionRange\s*=\s*"([^"]+)"/)?.[1];
+  return { id, version, minecraft };
 }
 
-export async function bundledClientUpdate(root: string): Promise<ClientUpdateInfo> {
-  const [client] = await loadBundle();
-  const hash = await fs.readFile(clientRuntimeJar(root)).then(sha256).catch(() => null);
+/** Where the launcher keeps a target's Vela jar inside the instance. */
+export function clientTargetPath(root: string, target: GameTarget): string {
+  return target.loader === "fabric" ? clientRuntimeJar(root) : managedNeoForgeJar(root);
+}
+
+async function loadBundle(target: GameTarget) {
+  const source = join(resourceRoot(), "clients", target.clientFile);
+  const bytes = await fs.readFile(source).catch(() => {
+    throw new Error(`В лаунчере нет Vela для ${targetLabel(target)}. Переустановите Vela Launcher.`);
+  });
+  const metadata = await readClientMetadata(source);
+  // The Vela client ships inside the launcher, so its own metadata is the source of its version; only the id and the
+  // Minecraft dependency are verified. Pinning the version here broke launching after every client bump.
+  if (metadata?.id !== "velaclient" || !metadata.version || !(metadata.minecraft ?? "").includes(target.minecraftVersion))
+    throw new Error(`Пакет ${target.clientFile} не соответствует Minecraft ${target.minecraftVersion} (${LOADERS[target.loader].title}). Переустановите Vela Launcher.`);
+  return { version: String(metadata.version), source, bytes, hash: sha256(bytes) };
+}
+
+export async function bundledClientUpdate(root: string, target: GameTarget): Promise<ClientUpdateInfo> {
+  const client = await loadBundle(target);
+  const hash = await fs.readFile(clientTargetPath(root, target)).then(sha256).catch(() => null);
   return {
     checkedAt: Date.now(), available: hash !== client.hash, installed: hash !== null,
     localCommitSha: hash, remoteCommitSha: client.hash, remoteVersion: client.version,
@@ -43,10 +60,15 @@ export async function bundledClientUpdate(root: string): Promise<ClientUpdateInf
   };
 }
 
-/** Stage verified release files, retaining superseded mod jars outside Fabric's scan path. */
-export async function installBundledClient(root: string): Promise<void> {
-  const releases = await loadBundle();
+/**
+ * Stage the target's verified Vela build, retaining superseded mod jars outside the loader's scan path. Fabric loads
+ * it from the hidden runtime folder (`-Dfabric.addMods`); NeoForge has no such switch, so there it is a managed file
+ * in the mods folder.
+ */
+export async function installBundledClient(root: string, target: GameTarget): Promise<void> {
+  const release = await loadBundle(target);
   const mods = join(root, "mods");
+  const destination = clientTargetPath(root, target);
   await fs.mkdir(mods, { recursive: true });
   await fs.mkdir(clientRuntimeDirectory(root), { recursive: true });
   if (process.platform === "win32") await promisify(execFile)("attrib.exe", ["+H", clientRuntimeDirectory(root)], { windowsHide: true }).catch(() => undefined);
@@ -54,45 +76,48 @@ export async function installBundledClient(root: string): Promise<void> {
   const saved: Array<{ from: string; to: string }> = [];
   const created: string[] = [];
   const stages: string[] = [];
+  const superseded = supersededIds(target);
+  const managed = basename(managedNeoForgeJar(root));
   try {
-    const replacements = [];
-    for (const release of releases) {
-      const target = release.id === "velaclient" ? clientRuntimeJar(root) : join(mods, release.filename);
-      if (await fs.readFile(target).then(bytes => sha256(bytes) === release.hash).catch(() => false)) continue;
-      const stage = `${target}.${randomUUID()}.pending`;
+    const current = await fs.readFile(destination).then(bytes => sha256(bytes) === release.hash).catch(() => false);
+    let stage: string | null = null;
+    if (!current) {
+      stage = `${destination}.${randomUUID()}.pending`;
       await fs.writeFile(stage, release.bytes, { flag: "wx" });
       stages.push(stage);
-      replacements.push({ stage, target });
     }
     for (const file of await fs.readdir(mods)) {
       if (!file.endsWith(".jar") || basename(file) !== file) continue;
-      if (releases.some(entry => entry.id !== "velaclient" && entry.filename === file) && !replacements.some(entry => basename(entry.target) === file)) continue;
+      // The managed NeoForge copy is replaced below; on Fabric a leftover one from a NeoForge stack is moved out.
+      if (file === managed && target.loader === "neoforge") continue;
       let id: string | undefined;
-      try { id = JSON.parse(await readArchiveText(join(mods, file), "fabric.mod.json") ?? "null")?.id; } catch { /* corrupt legacy jar */ }
-      if (!replacements.some(entry => basename(entry.target) === file) && !supersededIds.has(id ?? "") && !/^royale-master-.*\.jar$/i.test(file)) continue;
+      try { id = (await readClientMetadata(join(mods, file)))?.id; } catch { /* corrupt legacy jar */ }
+      if (file !== managed && !superseded.has(id ?? "") && !/^royale-master-.*\.jar$/i.test(file)) continue;
       await fs.mkdir(backup, { recursive: true });
       const from = join(mods, file), to = join(backup, file);
       await fs.rename(from, to);
       saved.push({ from, to });
     }
-    for (const replacement of replacements) {
-      // The private runtime target is outside the legacy-mod scan above.
-      if (replacement.target === clientRuntimeJar(root) && existsSync(replacement.target)) {
+    if (stage) {
+      if (existsSync(destination)) {
         await fs.mkdir(backup, { recursive: true });
-        const to = join(backup, "runtime-vela-client.jar");
-        await fs.rename(replacement.target, to);
-        saved.push({ from: replacement.target, to });
+        const to = join(backup, `previous-${basename(destination)}`);
+        await fs.rename(destination, to);
+        saved.push({ from: destination, to });
       }
-      await fs.rename(replacement.stage, replacement.target);
-      created.push(replacement.target);
+      await fs.rename(stage, destination);
+      created.push(destination);
     }
     const metadata = join(root, ".vela-client.json");
     const temporary = `${metadata}.${randomUUID()}.tmp`;
     stages.push(temporary);
-    await fs.writeFile(temporary, JSON.stringify({ version: releases[0].version, minecraft: GAME.minecraftVersion, files: releases.map(({ filename, hash }) => ({ filename, sha256: hash })) }, null, 2));
+    await fs.writeFile(temporary, JSON.stringify({
+      version: release.version, minecraft: target.minecraftVersion, loader: target.loader, loaderVersion: target.loaderVersion,
+      files: [{ filename: basename(destination), sha256: release.hash }],
+    }, null, 2));
     await fs.rename(temporary, metadata);
   } catch (error) {
-    for (const target of created) await fs.rm(target, { force: true });
+    for (const path of created) await fs.rm(path, { force: true });
     for (const entry of saved.reverse()) await fs.rename(entry.to, entry.from);
     throw error;
   } finally {

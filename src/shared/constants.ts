@@ -13,20 +13,26 @@ export const BRAND = {
 /** Public Discord application ID. Rich Presence never needs a client secret. */
 export const DISCORD_APP_ID = "1144713648120549536";
 
-/** Target game + loader versions the launcher installs. */
+import { CLIENT_VERSION, DEFAULT_TARGET, TARGET_VERSIONS, type GameTarget } from "./targets";
+
+/**
+ * The default game stack (the first Vela instance and anything without a version of its own). Each instance picks
+ * its own version and loader from TARGETS in ./targets.
+ */
 export const GAME = {
-  minecraftVersion: "26.2",
-  supportedMinecraftVersions: ["26.2"] as const,
-  fabricLoader: "0.20.1",
-  fabricApi: "0.159.0+26.2",
-  javaMajor: 25,
-  clientVersion: "0.2.0",
-  loader: "fabric" as const,
+  minecraftVersion: DEFAULT_TARGET.minecraftVersion,
+  supportedMinecraftVersions: TARGET_VERSIONS,
+  fabricLoader: DEFAULT_TARGET.loaderVersion,
+  fabricApi: DEFAULT_TARGET.fabricApi,
+  javaMajor: DEFAULT_TARGET.javaMajor,
+  clientVersion: CLIENT_VERSION,
+  loader: DEFAULT_TARGET.loader,
 } as const;
 
 /**
- * Mods nested inside the Vela client jar. Fabric loads the nested copy, so a second copy in the mods folder only
- * clashes with it: the launcher never installs one and disables any it finds.
+ * Mods compiled into the Vela client. The loader sees them as part of Vela, so a second copy in the mods folder only
+ * clashes with it: the launcher never installs one and disables any it finds. Which of them a build carries is
+ * GameTarget.bundledMods.
  */
 export const BUNDLED_MODS = [
   { id: "ias", version: "9.0.7", slugs: ["in-game-account-switcher"], title: "In-Game Account Switcher" },
@@ -34,10 +40,11 @@ export const BUNDLED_MODS = [
   { id: "bobby", version: "5.2.15", slugs: ["bobby"], title: "Bobby" },
 ] as const;
 
-/** The bundled mod matching a Fabric mod id or a Modrinth slug. */
-export function bundledMod(idOrSlug: string | null | undefined): (typeof BUNDLED_MODS)[number] | undefined {
+/** The bundled mod matching a mod id or a Modrinth slug; with a target, only the mods that build carries. */
+export function bundledMod(idOrSlug: string | null | undefined, target?: GameTarget): (typeof BUNDLED_MODS)[number] | undefined {
   const key = (idOrSlug ?? "").toLowerCase();
-  return key ? BUNDLED_MODS.find(mod => mod.id === key || (mod.slugs as readonly string[]).includes(key)) : undefined;
+  const mod = key ? BUNDLED_MODS.find(mod => mod.id === key || (mod.slugs as readonly string[]).includes(key)) : undefined;
+  return mod && (!target || target.bundledMods.includes(mod.id)) ? mod : undefined;
 }
 
 export const IPC = {
