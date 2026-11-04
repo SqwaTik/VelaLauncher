@@ -20,6 +20,7 @@ Branch `port/multiversion`. Vela client stays 0.2.1.
   - The instance list shows `version · loader` with the loader logo.
   - The edit dialog shows the instance's stack and the Java it needs.
   - Home, Mods, Settings and onboarding show the selected instance's version, loader and Java instead of a fixed 26.2 / Fabric / Java 25.
+  - No native `<select>` is left: the skin editor's blend mode uses the themed `UiSelect` dropdown (keyboard navigation, closes on outside click).
 - The bundled builds live in `build/clients/vela-client-<mc>-<loader>.jar` and ship as `resources/clients`. The single `build/vela-client.jar` is gone.
 
 ## Checks

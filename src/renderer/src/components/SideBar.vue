@@ -1290,21 +1290,18 @@ onBeforeUnmount(() => {
   background: var(--surface-4);
   transform: rotate(5deg);
 }
-.instance-name-field,
-.instance-version-field {
+.instance-name-field {
   margin-top: 20px;
   display: grid;
   gap: 7px;
 }
 .instance-name-field > span,
-.instance-version-field > span:first-child,
 .shared-folders h3 {
   color: var(--text-2);
   font-size: 10px;
   font-weight: 700;
 }
-.instance-name-field input,
-.instance-version-select {
+.instance-name-field input {
   height: 48px;
   padding: 0 14px;
   border-radius: 12px;
@@ -1316,35 +1313,9 @@ onBeforeUnmount(() => {
     border-color 0.16s,
     box-shadow 0.16s;
 }
-.instance-name-field input:focus,
-.instance-version-select:focus-within {
+.instance-name-field input:focus {
   border-color: var(--green-line);
   box-shadow: 0 0 0 3px rgba(117, 108, 255, 0.1);
-}
-.instance-version-select {
-  position: relative;
-  display: flex;
-  align-items: center;
-  padding-right: 12px;
-}
-.instance-version-select select {
-  width: 100%;
-  height: 100%;
-  padding: 0 42px 0 14px;
-  border: 0;
-  outline: 0;
-  appearance: none;
-  color: var(--text-0);
-  background: transparent;
-  font: inherit;
-  cursor: pointer;
-}
-.instance-version-select svg {
-  position: absolute;
-  right: 14px;
-  pointer-events: none;
-  color: var(--green);
-  transform: rotate(90deg);
 }
 .instance-stack {
   display: flex;

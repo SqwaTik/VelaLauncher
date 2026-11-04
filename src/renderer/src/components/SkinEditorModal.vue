@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import UiSelect from "@/components/ui/UiSelect.vue";
 import { nextTick, onMounted, ref } from "vue";
 import Icon from "./Icon.vue";
 import SkinPreview3D from "./SkinPreview3D.vue";
@@ -22,6 +23,12 @@ const showGrid = ref(true);
 const previewUrl = ref<string | null>(account.skinSource);
 const overlayOpacity = ref(70);
 const overlayMode = ref<GlobalCompositeOperation>("source-over");
+const blendModes: { value: GlobalCompositeOperation; label: string }[] = [
+  { value: "source-over", label: "Обычное" },
+  { value: "multiply", label: "Умножение" },
+  { value: "screen", label: "Экран" },
+  { value: "overlay", label: "Перекрытие" },
+];
 const innerLayer = ref(true);
 const outerLayer = ref(true);
 const headOuter = ref(true);
@@ -711,12 +718,11 @@ onMounted(async () => {
               <Icon name="trash" :size="16" />Очистить 2-й слой
             </button>
             <p class="tool-label section-label">Наложение PNG</p>
-            <select v-model="overlayMode" class="blend-select">
-              <option value="source-over">Обычное</option>
-              <option value="multiply">Умножение</option>
-              <option value="screen">Экран</option>
-              <option value="overlay">Перекрытие</option></select
-            ><label class="opacity-row"
+            <UiSelect
+              v-model="overlayMode"
+              :options="blendModes"
+              aria-label="Наложение PNG"
+            /><label class="opacity-row"
               ><span>Прозрачность</span
               ><input
                 v-model.number="overlayOpacity"
@@ -1496,16 +1502,6 @@ onMounted(async () => {
 .hex-field:focus {
   border-color: var(--green-line);
   box-shadow: 0 0 0 3px var(--green-soft);
-}
-.blend-select {
-  width: 100%;
-  height: 34px;
-  padding: 0 8px;
-  border-radius: 8px;
-  color: var(--text-1);
-  background: var(--surface-2);
-  border: 1px solid var(--hairline);
-  font-size: 10px;
 }
 .opacity-row {
   margin: 7px 0;
