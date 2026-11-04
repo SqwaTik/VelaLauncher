@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { parseJavaVersion } from "../main/services/java";
 import { loadState, saveSettings, saveAccounts, migrateLegacyStorage, recordPlaytime } from "../main/services/store";
 import { decodeAppearancePng, syncAppearanceManifest } from "../main/services/appearance-export";
 import { bundledClientUpdate, installBundledClient } from "../main/services/bundled-client";
 import { launchGame, cancelLaunch, gameOperationBusy } from "../main/services/game";
 import { isTransientNetworkError } from "../main/services/network";
-import { clientRuntimeJar, clientRuntimeArgs } from "../main/services/client-runtime";
+import { clientRuntimeJar, clientRuntimeArgs, managedNeoForgeJar } from "../main/services/client-runtime";
+import { TARGETS, findTarget, loaderVersionId } from "../shared/targets";
 
 const t=(globalThis as any).__velaVerify;
 let checks=0;
@@ -51,18 +52,42 @@ await check("cosmetic manifest never contains credentials and supports every pro
  const state=await loadState();assert((await fs.readFile(join(state.settings.storagePath,"appearance","manifest.json"),"utf8")).includes("capeHidden"));
 });
 await check("bundle installs current Vela, retires separate bundled mods and repairs modified bytes",async()=>{
- const root=join(t.root,"bundle");
- await installBundledClient(root);
- assert.equal((await bundledClientUpdate(root)).available,false);
+ const root=join(t.root,"bundle"),fabric=findTarget("26.2","fabric");
+ await installBundledClient(root,fabric);
+ assert.equal((await bundledClientUpdate(root,fabric)).available,false);
  const jars=await fs.readdir(join(root,"mods"));
  assert(!jars.some(name=>name.startsWith("vela-client")));assert(!jars.some(name=>name.startsWith("IAS-")));
  await fs.copyFile(clientRuntimeJar(root),join(root,"mods","renamed-legacy-client.jar"));
- await installBundledClient(root);
+ await installBundledClient(root,fabric);
  assert(!(await fs.readdir(join(root,"mods"))).includes("renamed-legacy-client.jar"));
  await fs.writeFile(clientRuntimeJar(root),"broken");
- assert.equal((await bundledClientUpdate(root)).available,true);
- await installBundledClient(root);assert.equal((await bundledClientUpdate(root)).available,false);
+ assert.equal((await bundledClientUpdate(root,fabric)).available,true);
+ await installBundledClient(root,fabric);assert.equal((await bundledClientUpdate(root,fabric)).available,false);
  assert((await fs.readdir(join(root,"mod-backups"))).length>0);
+});
+await check("every target has its own bundled Vela build",async()=>{
+ assert.equal(TARGETS.length,10);
+ assert.equal(new Set(TARGETS.map(target=>target.key)).size,TARGETS.length);
+ for(const target of TARGETS){
+  const root=join(t.root,"targets",target.key);
+  await installBundledClient(root,target);
+  const update=await bundledClientUpdate(root,target);
+  assert.equal(update.available,false,target.key);assert.equal(update.remoteVersion?.startsWith("0.2.1"),true,target.key);
+  const meta=JSON.parse(await fs.readFile(join(root,".vela-client.json"),"utf8"));
+  assert.equal(meta.minecraft,target.minecraftVersion);assert.equal(meta.loader,target.loader);
+ }
+ assert.equal(loaderVersionId(findTarget("1.21.4","neoforge")),"neoforge-21.4.161");
+ assert.equal(loaderVersionId(findTarget("1.21.4","fabric")),"1.21.4-fabric-0.20.1");
+ assert.equal(findTarget("1.16.5","neoforge").key,"26.2-neoforge");
+});
+await check("NeoForge loads Vela from mods and switching stacks moves the other copy out",async()=>{
+ const root=join(t.root,"switch"),neo=findTarget("1.21.4","neoforge"),fabric=findTarget("1.21.4","fabric");
+ await installBundledClient(root,neo);
+ assert((await fs.readdir(join(root,"mods"))).includes(basename(managedNeoForgeJar(root))));
+ assert.deepEqual(clientRuntimeArgs(root,["-Xmx4G"],"neoforge"),["-Xmx4G"]);
+ await installBundledClient(root,fabric);
+ assert(!(await fs.readdir(join(root,"mods"))).some(name=>name.startsWith("vela-client")));
+ assert.equal((await bundledClientUpdate(root,fabric)).available,false);
 });
 await check("runtime JVM argument preserves extra mods and is idempotent",()=>{
  const root=join(t.root,"path with spaces");

@@ -1,4 +1,5 @@
 /** Shared types crossing the IPC boundary (main <-> renderer). */
+import type { LoaderId } from "./targets";
 
 export type AccountType = "microsoft" | "offline" | "ely" | "littleskin";
 export type SkinModel = "classic" | "slim";
@@ -55,6 +56,8 @@ export interface GameInstance {
   id: string;
   name: string;
   minecraftVersion: string;
+  /** Mod loader of the instance; missing in configs from before NeoForge support, which means Fabric. */
+  loader?: LoaderId;
   /** Empty only for the original Vela workspace at storagePath root. */
   directory: string;
   source: InstanceSource;

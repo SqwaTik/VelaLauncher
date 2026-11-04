@@ -2,23 +2,24 @@ import { computed, ref } from "vue";
 import { defineStore } from "pinia";
 import type { GameInstance, InstanceSource } from "@shared/types";
 import { GAME } from "@shared/constants";
+import { findTarget, type LoaderId } from "@shared/targets";
 
 export const MAX_INSTANCES = 4;
 
 function freshInstance(
   name: string,
   source: InstanceSource,
-  minecraftVersion = GAME.minecraftVersion,
+  minecraftVersion: string = GAME.minecraftVersion,
+  loader: LoaderId = GAME.loader,
 ): GameInstance {
+  // Unknown stacks fall back to the default Vela build instead of creating an instance nothing can launch.
+  const target = findTarget(minecraftVersion, loader);
   const id = `instance-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   return {
     id,
     name: name.trim() || "Новый экземпляр",
-    minecraftVersion: GAME.supportedMinecraftVersions.some(
-      (version) => version === minecraftVersion,
-    )
-      ? minecraftVersion
-      : GAME.minecraftVersion,
+    minecraftVersion: target.minecraftVersion,
+    loader: target.loader,
     directory: id,
     source,
     iconDataUrl: null,
@@ -79,14 +80,15 @@ export const useInstancesStore = defineStore("instances", () => {
   async function create(
     name: string,
     source: InstanceSource = "created",
-    minecraftVersion = GAME.minecraftVersion,
+    minecraftVersion: string = GAME.minecraftVersion,
+    loader: LoaderId = GAME.loader,
   ): Promise<GameInstance | null> {
     error.value = "";
     if (!canCreate.value) {
       error.value = "Можно создать не больше 4 экземпляров.";
       return null;
     }
-    const instance = freshInstance(name, source, minecraftVersion);
+    const instance = freshInstance(name, source, minecraftVersion, loader);
     instances.value.push(instance);
     activeId.value = instance.id;
     await persist();

@@ -1,13 +1,17 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import Icon from "./Icon.vue";
-import { GAME } from "@shared/constants";
+import { targetOf } from "@shared/targets";
+import { useInstancesStore } from "@/stores/instances";
 import { useAccountStore } from "@/stores/account";
 import { useSettingsStore } from "@/stores/settings";
 import logo from "@/assets/images/vela-logo.png";
 
 const account = useAccountStore();
 const settings = useSettingsStore();
+
+/** Version, loader and Java of the selected instance; every label below follows it. */
+const stack = computed(() => targetOf(useInstancesStore().active));
 const step = ref(0);
 const playerName = ref("");
 const accountMode = ref<"offline" | "ely" | "littleskin">("offline");
@@ -208,7 +212,7 @@ async function finish(): Promise<void> {
             </div>
             <div v-else-if="step === 2" key="java" class="tour-page">
               <p class="eyebrow">Шаг 3</p>
-              <h1>Java {{ GAME.javaMajor }} для Minecraft</h1>
+              <h1>Java {{ stack.javaMajor }} для Minecraft</h1>
               <p>
                 Java — среда, в которой работает Minecraft. Если подходящей
                 версии нет, Vela загрузит её в собственную папку автоматически
@@ -222,10 +226,10 @@ async function finish(): Promise<void> {
                   <b>{{
                     javaReady
                       ? `Java ${settings.java?.majorVersion} готова`
-                      : `Java ${GAME.javaMajor} не найдена`
+                      : `Java ${stack.javaMajor} не найдена`
                   }}</b
                   ><small>{{
-                    settings.java?.path || `.vela/jre/java${GAME.javaMajor}`
+                    settings.java?.path || `.vela/jre/java${stack.javaMajor}`
                   }}</small>
                 </div>
               </div>

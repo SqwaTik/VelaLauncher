@@ -10,7 +10,8 @@ import { Readable, Transform } from "stream";
 import { pipeline } from "stream/promises";
 import { BrowserWindow, shell } from "electron";
 import { open as openZip } from "yauzl";
-import { MODRINTH_API, GAME, IPC, BUNDLED_MODS, bundledMod } from "../../shared/constants";
+import { MODRINTH_API, IPC, BUNDLED_MODS, bundledMod as bundledModFor } from "../../shared/constants";
+import { LOADERS } from "../../shared/targets";
 import type {
   ModDependency,
   ModInstallResult,
@@ -21,10 +22,25 @@ import type {
   InstalledResourcePack,
   InstalledShaderPack,
 } from "../../shared/types";
-import { modsDir, resourcePacksDir, shaderPacksDir } from "./store";
+import { modsDir, resourcePacksDir, shaderPacksDir, activeTargetSync } from "./store";
 import { fetchWithRetry as resilientFetchWithRetry } from "./network";
 
 const UA = "SqwaTik/VelaLauncher (vela-launcher)";
+/** Version, loader and Java of the active instance; every Modrinth query and compatibility check follows it. */
+const target = activeTargetSync;
+const bundledMod = (idOrSlug: string | null | undefined) => bundledModFor(idOrSlug, target());
+/** The launcher-managed Vela jar of a NeoForge instance (see client-runtime.ts). */
+const isManagedClient = (filename: string): boolean => /^vela-client-.+-managed\.jar(\.disabled)?$/i.test(filename);
+
+/** Mod id from fabric.mod.json or META-INF/neoforge.mods.toml. */
+async function readModId(path: string): Promise<string | undefined> {
+  const fabric = await readArchiveText(path, "fabric.mod.json").catch(() => null);
+  if (fabric) {
+    try { return JSON.parse(fabric)?.id; } catch { return undefined; }
+  }
+  const toml = await readArchiveText(path, "META-INF/neoforge.mods.toml").catch(() => null);
+  return toml?.match(/^\s*modId\s*=\s*"([^"]+)"/m)?.[1];
+}
 const responseCache = new Map<string, { expires: number; value: unknown }>();
 
 async function fetchWithRetry(
@@ -129,10 +145,10 @@ async function searchByType(
   projectType: "mod" | "resourcepack" | "shader" = "mod",
 ): Promise<ModSearchResult> {
   const facets: string[][] = [
-    [`versions:${GAME.minecraftVersion}`],
+    [`versions:${target().minecraftVersion}`],
     [`project_type:${projectType}`],
   ];
-  if (projectType === "mod") facets.push(["categories:fabric"]);
+  if (projectType === "mod") facets.push([`categories:${target().loader}`]);
   if (category && category !== "all") facets.push([`categories:${category}`]);
   const index = [
     "relevance",
@@ -248,8 +264,8 @@ function versionFile(raw: RawVersion): ModVersionFile | null {
 
 export async function versions(projectId: string): Promise<ModVersionFile[]> {
   const raw = await api<RawVersion[]>(`/project/${projectId}/version`, {
-    game_versions: JSON.stringify([GAME.minecraftVersion]),
-    loaders: JSON.stringify(["fabric"]),
+    game_versions: JSON.stringify([target().minecraftVersion]),
+    loaders: JSON.stringify([target().loader]),
   });
   return raw
     .map(versionFile)
@@ -357,7 +373,7 @@ interface ModHealthCache {
   checkedAt: number;
 }
 
-async function modSetFingerprint(dir: string, javaMajor = GAME.javaMajor as number): Promise<string> {
+async function modSetFingerprint(dir: string, javaMajor = target().javaMajor): Promise<string> {
   if (!existsSync(dir)) return createHash("sha1").update("empty").digest("hex");
   const entries = await fs.readdir(dir, { withFileTypes: true });
   const files = entries
@@ -370,7 +386,7 @@ async function modSetFingerprint(dir: string, javaMajor = GAME.javaMajor as numb
       return `${filename}\0${stat.size}\0${stat.mtimeMs}`;
     }),
   );
-  return createHash("sha1").update([GAME.minecraftVersion, GAME.fabricLoader, javaMajor, ...rows].join("\n")).digest("hex");
+  return createHash("sha1").update([target().minecraftVersion, target().loader, target().loaderVersion, javaMajor, ...rows].join("\n")).digest("hex");
 }
 
 async function readModHealth(dir: string): Promise<ModHealthCache | null> {
@@ -594,7 +610,7 @@ async function fabricDescriptors(): Promise<FabricModDescriptor[]> {
 
 function fabricCompatibilityIssues(
   descriptors: FabricModDescriptor[],
-  javaMajor = GAME.javaMajor as number,
+  javaMajor = target().javaMajor,
 ): FabricCompatibilityIssue[] {
   const byId = new Map<string, FabricModDescriptor>();
   for (const descriptor of descriptors) {
@@ -602,11 +618,11 @@ function fabricCompatibilityIssues(
     for (const provided of descriptor.provides) byId.set(provided, descriptor);
   }
   const builtins = new Map<string, string>([
-    ["minecraft", GAME.minecraftVersion],
-    ["fabricloader", GAME.fabricLoader],
+    ["minecraft", target().minecraftVersion],
+    ["fabricloader", target().loaderVersion],
     ["java", String(javaMajor)],
     // Nested in the Vela client, which Fabric loads from the runtime folder.
-    ...BUNDLED_MODS.map((mod): [string, string] => [mod.id, mod.version]),
+    ...BUNDLED_MODS.filter((mod) => bundledMod(mod.id)).map((mod): [string, string] => [mod.id, mod.version]),
   ]);
   const hasFabricApi = byId.has("fabric-api");
   const issues: FabricCompatibilityIssue[] = [];
@@ -915,7 +931,7 @@ export async function installMod(
 
 export async function repairInstalledMods(
   onStatus?: (message: string) => void,
-  javaMajor = GAME.javaMajor as number,
+  javaMajor = target().javaMajor,
 ): Promise<{ repaired: string[]; disabled: string[] }> {
   const dir = await modsDir();
   const initialFingerprint = await modSetFingerprint(dir, javaMajor);
@@ -926,7 +942,7 @@ export async function repairInstalledMods(
 
   for (const mod of installed.filter((entry) => entry.enabled)) {
     const path = join(dir, mod.filename);
-    const bundled = bundledMod((await readFabricModDescriptor(path, mod).catch(() => null))?.id);
+    const bundled = bundledMod(await readModId(path).catch(() => undefined));
     if (!bundled) continue;
     onStatus?.(`Отключаем ${bundled.title}: мод уже встроен в Vela`);
     await fs.rm(`${path}.disabled`, { force: true });
@@ -1040,7 +1056,8 @@ export async function repairInstalledMods(
 
   // Local Fabric metadata is enough for the common healthy case. Modrinth is
   // contacted only when the installed set changed and exposes a real issue.
-  const localIssues = fabricCompatibilityIssues(await fabricDescriptors(), javaMajor);
+  // NeoForge reads its own mods.toml rules at startup; only Fabric metadata is checked here.
+  const localIssues = target().loader === "fabric" ? fabricCompatibilityIssues(await fabricDescriptors(), javaMajor) : [];
   if (localIssues.length) {
     const dependencyRepairs = await reconcileRequiredModVersions(onStatus);
     for (const title of dependencyRepairs) {
@@ -1120,7 +1137,7 @@ function constraintText(constraint: FabricConstraint): string {
 
 async function reconcileFabricMetadataCompatibility(
   onStatus?: (message: string) => void,
-  javaMajor = GAME.javaMajor as number,
+  javaMajor = target().javaMajor,
 ): Promise<string[]> {
   const repaired: string[] = [];
   const attempted = new Set<string>();
@@ -1256,9 +1273,10 @@ export async function installProject(
 
   async function compatibleInstalled(mod: InstalledMod): Promise<boolean> {
     if (!mod.enabled) return false;
+    if (target().loader !== "fabric") return true;
     const descriptor = await readFabricModDescriptor(join(await modsDir(), mod.filename), mod);
-    return Boolean(descriptor && satisfiesVersion(GAME.minecraftVersion, descriptor.depends.minecraft ?? "*")
-      && satisfiesVersion(GAME.fabricLoader, descriptor.depends.fabricloader ?? "*"));
+    return Boolean(descriptor && satisfiesVersion(target().minecraftVersion, descriptor.depends.minecraft ?? "*")
+      && satisfiesVersion(target().loaderVersion, descriptor.depends.fabricloader ?? "*"));
   }
 
   function inferredInstalled(displayTitle: string): InstalledMod | undefined {
@@ -1309,7 +1327,7 @@ export async function installProject(
       : (await versions(id))[0];
     if (!compatible) {
       throw new Error(
-        `${displayTitle}: нет версии для Minecraft ${GAME.minecraftVersion} / Fabric.`,
+        `${displayTitle}: нет версии для Minecraft ${target().minecraftVersion} / ${LOADERS[target().loader].title}.`,
       );
     }
 
@@ -1395,7 +1413,7 @@ async function packVersions(
   kind: PackKind,
 ): Promise<ModVersionFile[]> {
   const params: Record<string, string> = {
-    game_versions: JSON.stringify([GAME.minecraftVersion]),
+    game_versions: JSON.stringify([target().minecraftVersion]),
   };
   params.loaders = JSON.stringify([kind === "shader" ? "iris" : "minecraft"]);
   const raw = await api<RawVersion[]>(`/project/${projectId}/version`, params);
@@ -1499,7 +1517,7 @@ export async function installResourceProject(
   const compatible = (await packVersions(projectId, "resourcepack"))[0];
   if (!compatible)
     throw new Error(
-      `Для ${details.title} нет версии под Minecraft ${GAME.minecraftVersion}.`,
+      `Для ${details.title} нет версии под Minecraft ${target().minecraftVersion}.`,
     );
   return installPackFile(
     "resourcepack",
@@ -1576,7 +1594,7 @@ export async function installShaderProject(
   const compatible = (await packVersions(projectId, "shader"))[0];
   if (!compatible)
     throw new Error(
-      `Для ${details.title} нет версии под Minecraft ${GAME.minecraftVersion}.`,
+      `Для ${details.title} нет версии под Minecraft ${target().minecraftVersion}.`,
     );
   return installPackFile(
     "shader",
@@ -1611,7 +1629,7 @@ export async function listInstalled(
   if (!existsSync(dir)) return [];
   const metadata = await readMetadata(dir);
   const files = (await fs.readdir(dir)).filter(
-    (name) => name.endsWith(".jar") || name.endsWith(".jar.disabled"),
+    (name) => (name.endsWith(".jar") || name.endsWith(".jar.disabled")) && !isManagedClient(name),
   );
   const result: InstalledMod[] = await Promise.all(
     files.map(async (filenameOnDisk) => {
@@ -1688,10 +1706,8 @@ export async function toggleMod(
   const active = join(dir, filename);
   const disabled = join(dir, `${filename}.disabled`);
   if (enabled && existsSync(disabled)) {
-    const text = await readArchiveText(disabled, "fabric.mod.json").catch(() => null);
-    let id: string | undefined;
-    try { id = text ? JSON.parse(text)?.id : undefined; } catch { /* unreadable jar: let Fabric report it */ }
-    const bundled = bundledMod(id);
+    // An unreadable jar has no id here; the loader reports it at startup.
+    const bundled = bundledMod(await readModId(disabled).catch(() => undefined));
     if (bundled) throw new Error(`${bundled.title} уже встроен в Vela, отдельную копию включить нельзя.`);
     await fs.rename(disabled, active);
   }

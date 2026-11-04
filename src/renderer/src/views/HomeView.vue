@@ -2,8 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import Icon from "@/components/Icon.vue";
-import FabricLogo from "@/components/FabricLogo.vue";
-import { GAME } from "@shared/constants";
+import LoaderLogo from "@/components/LoaderLogo.vue";
+import { LOADERS, targetOf } from "@shared/targets";
 import { useLauncherStore } from "@/stores/launcher";
 import { useAccountStore } from "@/stores/account";
 import { useSettingsStore } from "@/stores/settings";
@@ -22,6 +22,9 @@ const mods = useModsStore();
 const resources = useResourcesStore();
 const shaders = useShadersStore();
 const instances = useInstancesStore();
+
+/** Version, loader and Java of the selected instance; every label below follows it. */
+const stack = computed(() => targetOf(useInstancesStore().active));
 const { tr } = useLocale();
 const slide = ref(0);
 const galleryHovered = ref(false);
@@ -202,8 +205,9 @@ onBeforeUnmount(() => {
       <img class="hero-sail" :src="generatedLogo" alt="" draggable="false" />
       <header class="hero-top">
         <span class="hero-tag"
-          ><span class="tag-fabric"><FabricLogo /></span>Minecraft
-          {{ GAME.minecraftVersion }} · Fabric</span
+          ><span class="tag-fabric" :class="stack.loader"
+            ><LoaderLogo :loader="stack.loader" /></span
+          >Minecraft {{ stack.minecraftVersion }} · {{ LOADERS[stack.loader].title }}</span
         >
         <RouterLink to="/account" class="profile-chip">
           <span class="avatar"
@@ -250,9 +254,9 @@ onBeforeUnmount(() => {
         <p class="instance-description">
           {{
             tr(
-              `Готовая клиентская сборка для Minecraft ${GAME.minecraftVersion}`,
-              `A ready-to-play Minecraft ${GAME.minecraftVersion} client`,
-              `Cliente de Minecraft ${GAME.minecraftVersion} listo para jugar`,
+              `Готовая клиентская сборка для Minecraft ${stack.minecraftVersion} на ${LOADERS[stack.loader].title}`,
+              `A ready-to-play Minecraft ${stack.minecraftVersion} client on ${LOADERS[stack.loader].title}`,
+              `Cliente de Minecraft ${stack.minecraftVersion} en ${LOADERS[stack.loader].title} listo para jugar`,
             )
           }}
         </p>
@@ -716,7 +720,11 @@ onBeforeUnmount(() => {
   display: grid;
   place-items: center;
   border-radius: 50%;
+  font-size: 13px;
   background: rgba(255, 255, 255, 0.07);
+}
+.tag-fabric.neoforge {
+  background: rgba(240, 138, 69, 0.16);
 }
 .tag-fabric :deep(svg) {
   width: 13px;

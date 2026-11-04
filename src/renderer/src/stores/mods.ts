@@ -7,6 +7,7 @@ import type {
 } from "@shared/types";
 import { useInstancesStore } from "./instances";
 import { bundledMod } from "@shared/constants";
+import { targetOf } from "@shared/targets";
 
 function cleanError(error: unknown): string {
   const value = (error instanceof Error ? error.message : String(error))
@@ -109,7 +110,7 @@ export const useModsStore = defineStore("mods", () => {
 
   /** Mods nested in the Vela client; the catalogue shows them as built in instead of offering an install. */
   function isBundled(project: ModProject): boolean {
-    return Boolean(bundledMod(project.slug));
+    return Boolean(bundledMod(project.slug, targetOf(useInstancesStore().active)));
   }
 
   async function installLatest(project: ModProject): Promise<void> {

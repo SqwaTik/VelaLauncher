@@ -11,6 +11,7 @@ import type {
   Friend,
 } from "../../shared/types";
 import { GAME } from "../../shared/constants";
+import { findTarget, normalizeLoader, targetOf, loaderVersionId, type GameTarget, type LoaderId } from "../../shared/targets";
 import { syncAppearanceManifest } from "./appearance-export";
 
 /**
@@ -31,6 +32,7 @@ function defaultInstance(): GameInstance {
     id: DEFAULT_INSTANCE_ID,
     name: "Vela",
     minecraftVersion: GAME.minecraftVersion,
+    loader: GAME.loader,
     directory: "",
     source: "default",
     iconDataUrl: null,
@@ -100,6 +102,12 @@ function defaultState(): PersistShape {
 }
 
 let cache: PersistShape | null = null;
+
+/** The instance's version and loader if Vela is built for that pair, otherwise the nearest supported pair. */
+function supportedStack(instance: Partial<GameInstance>): { minecraftVersion: string; loader: LoaderId } {
+  const target = findTarget(instance.minecraftVersion, normalizeLoader(instance.loader));
+  return { minecraftVersion: target.minecraftVersion, loader: target.loader };
+}
 let loading: Promise<PersistShape> | null = null;
 let persistenceQueue: Promise<void> = Promise.resolve();
 
@@ -219,11 +227,7 @@ async function initializeState(): Promise<PersistShape> {
             instance.name === "Royale Master" || instance.name === "Royale"
               ? "Vela"
               : instance.name,
-          minecraftVersion: GAME.supportedMinecraftVersions.some(
-            (version) => version === instance.minecraftVersion,
-          )
-            ? instance.minecraftVersion
-            : GAME.minecraftVersion,
+          ...supportedStack(instance),
           sharedFolders: {
             ...defaultInstance().sharedFolders,
             ...(instance.sharedFolders ?? {}),
@@ -379,13 +383,9 @@ export async function saveInstances(
   activeInstanceId: string,
 ): Promise<PersistShape> {
   const state = await loadState();
-  const normalized = instances.slice(0, MAX_INSTANCES).map((instance) => ({
+  const normalized: GameInstance[] = instances.slice(0, MAX_INSTANCES).map((instance) => ({
     ...instance,
-    minecraftVersion: GAME.supportedMinecraftVersions.some(
-      (version) => version === instance.minecraftVersion,
-    )
-      ? instance.minecraftVersion
-      : GAME.minecraftVersion,
+    ...supportedStack(instance),
   }));
   if (!normalized.length) normalized.push(defaultInstance());
   state.instances = normalized;
@@ -450,6 +450,7 @@ export async function instanceDir(id: string): Promise<string> {
 
 export async function createImportedInstance(
   name: string,
+  stack: { minecraftVersion?: string; loader?: LoaderId } = {},
 ): Promise<GameInstance> {
   const state = await loadState();
   if (state.instances.length >= MAX_INSTANCES) {
@@ -459,7 +460,7 @@ export async function createImportedInstance(
   const instance: GameInstance = {
     id,
     name: name.trim() || "Импортированная сборка",
-    minecraftVersion: GAME.minecraftVersion,
+    ...supportedStack(stack),
     directory: id,
     source: "imported",
     iconDataUrl: null,
@@ -564,5 +565,22 @@ export async function shaderPacksDir(): Promise<string> {
 }
 
 export function targetVersionId(): string {
-  return `fabric-loader-${GAME.fabricLoader}-${GAME.minecraftVersion}`;
+  const target = activeTargetSync();
+  return target.loader === "fabric"
+    ? `fabric-loader-${target.loaderVersion}-${target.minecraftVersion}`
+    : loaderVersionId(target);
+}
+
+/** The game stack of the active instance. */
+export async function activeTarget(): Promise<GameTarget> {
+  return targetOf(await activeInstance());
+}
+
+/**
+ * The game stack of the active instance from the loaded config, for code that cannot wait (the state is loaded at
+ * startup, before any install, launch or Modrinth call).
+ */
+export function activeTargetSync(): GameTarget {
+  const instance = cache?.instances.find((item) => item.id === cache?.activeInstanceId) ?? cache?.instances[0];
+  return targetOf(instance);
 }

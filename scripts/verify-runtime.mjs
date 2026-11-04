@@ -18,7 +18,7 @@ const mocks = {
  export const LaunchPrecheck={checkVersion:async()=>{},checkLibraries:async()=>{}};
  export async function launch(options){if(t.failNext){t.failNext=false;throw new Error("simulated launch failure");}const child=new EventEmitter();child.stdout=new EventEmitter();child.stderr=new EventEmitter();child.watcher=new EventEmitter();child.pid=100+t.children.length;child.killed=false;child.kill=()=>{child.killed=true;return true;};child.options=options;t.children.push(child);return child;}
  export const createMinecraftProcessWatcher=child=>child.watcher;`,
- installer: `export class DownloadTask{};const task=()=>({startAndWait:async()=>{}});export const installTask=task,installVersionTask=task,installResolvedLibrariesTask=task,installResolvedAssetsTask=task,installAssetsTask=task;export const getVersionList=async()=>({versions:[]});`,
+ installer: `export class DownloadTask{};const task=()=>({startAndWait:async()=>{}});export const installTask=task,installNeoForgedTask=task,installVersionTask=task,installResolvedLibrariesTask=task,installResolvedAssetsTask=task,installAssetsTask=task;export const getVersionList=async()=>({versions:[]});`,
  task: `export class CancelledError extends Error{};export class Task{};`,
  java: `export const detectJava=async()=>({path:"java25.exe",valid:true,majorVersion:25,version:"25.0.1"});export const installRequiredJava=detectJava;`,
  mods: `export const installProject=async()=>{};export const repairInstalledMods=async()=>{};export const isJarStructurallyValid=async()=>true;`,
